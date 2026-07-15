@@ -1,0 +1,86 @@
+/**
+ * D1 adapter for {@link KeyStore}.
+ *
+ * Implements one of the two seams in `storage.ts`. `RecordStore` is still the not-implemented stub,
+ * so a request bearing a valid key now gets *past* authentication and 501s at the point it actually
+ * needs records — which is what proves the key tables work end to end.
+ */
+
+import type { Principal } from './auth';
+import type { KeyStore } from './storage';
+
+/** The one row {@link D1KeyStore.resolve} reads. `app_id`/`instance_id` are null for a read key. */
+interface KeyRow {
+  readonly kind: string;
+  readonly app_id: string | null;
+  readonly instance_id: string | null;
+}
+
+/**
+ * The `LEFT` is load-bearing. A read key has no `installation_pk`, so an inner join would return
+ * zero rows for it — every bulk download would 401, and no test that only exercises installation
+ * keys would ever notice.
+ *
+ * `revoked_at IS NULL` is the other half of soft deletion. Forgetting it would silently resurrect
+ * every revoked key ever issued.
+ */
+const RESOLVE_SQL = `
+  SELECT k.kind, i.app_id, i.instance_id
+  FROM api_keys k
+  LEFT JOIN installations i ON i.id = k.installation_pk
+  WHERE k.key_hash = ?1 AND k.revoked_at IS NULL
+`;
+
+const encoder = new TextEncoder();
+
+/**
+ * sha256 of `key`, lowercase hex.
+ *
+ * Must agree byte for byte with `printf %s "$key" | shasum -a 256`, which is how an operator mints
+ * the value stored in `api_keys.key_hash`: UTF-8, no trailing newline, lowercase. A golden fixture
+ * in the tests pins that agreement, because the failure mode is a silent, permanent 401 that is by
+ * design indistinguishable from revocation.
+ *
+ * WebCrypto rather than `node:crypto`: it is native to the runtime, and `nodejs_compat` being on
+ * for other reasons is not a reason to reach for a shim.
+ */
+async function sha256Hex(key: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(key));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export class D1KeyStore implements KeyStore {
+  constructor(private readonly db: D1Database) {}
+
+  async resolve(presentedKey: string): Promise<Principal | null> {
+    const hash = await sha256Hex(presentedKey);
+
+    // Deliberately not wrapped in a try/catch. A D1 failure must propagate: `null` here means 401,
+    // and answering 401 to a database outage would tell every client at once that its credential is
+    // bad — the one conclusion it must not draw, and one that could make a well-behaved client stop
+    // retrying and discard queued records. Propagating surfaces as 500 at the error boundary in
+    // `app.ts`, which is honest. `StorageUnavailableError` (503 + Retry-After) is deliberately not
+    // used: it asserts the failure is transient, and a rejected `prepare` could equally be a typo in
+    // the SQL above. `.first()` returns null for zero rows and throws on error, so the two cases
+    // arrive through different channels and no error-message sniffing is needed.
+    const row = await this.db.prepare(RESOLVE_SQL).bind(hash).first<KeyRow>();
+
+    // No row: unknown or revoked. The query cannot tell us which, by design, and neither can the
+    // caller — both are 401.
+    if (row === null) return null;
+
+    if (row.kind === 'read') return { kind: 'read' };
+
+    if (row.kind === 'installation' && row.app_id !== null && row.instance_id !== null) {
+      return { kind: 'installation', appId: row.app_id, instanceId: row.instance_id };
+    }
+
+    // Unreachable while the CHECK constraints hold — which is the point: the schema and the type
+    // system enforce one invariant from both ends. TypeScript makes us narrow the nullable columns
+    // anyway, so this costs nothing. Fail closed rather than throw: a row we cannot map is a row we
+    // cannot authorize. Logged, because unlike every other 401 this one means the database disagrees
+    // with `Principal`.
+    console.error('api_keys row does not map to a Principal', { kind: row.kind });
+    return null;
+  }
+}

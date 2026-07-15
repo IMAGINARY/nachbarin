@@ -1,9 +1,11 @@
 /**
  * Persistence boundary.
  *
- * Nothing here is implemented yet — these are the seams the database adapter will fill. Handlers
- * depend only on the interfaces, so the adapter drops in without touching request-handling logic,
- * and tests substitute in-memory fakes.
+ * These are the seams the database adapters fill. Handlers depend only on the interfaces, so an
+ * adapter drops in without touching request-handling logic, and tests substitute in-memory fakes.
+ *
+ * `KeyStore` is implemented — see `d1-key-store.ts`. `RecordStore` is not: it is still the stub
+ * below, so a request that gets past authentication and validation answers 501.
  *
  * `KeyStore` and `RecordStore` are separate on purpose. Authentication must happen before the
  * request body is read, so key resolution sits on a different (and much hotter, much more
@@ -137,12 +139,6 @@ export class StorageUnavailableError extends Error {
     this.name = 'StorageUnavailableError';
   }
 }
-
-export const notImplementedKeyStore: KeyStore = {
-  resolve() {
-    return Promise.reject(new NotImplementedError('KeyStore.resolve'));
-  },
-};
 
 export const notImplementedRecordStore: RecordStore = {
   insert() {
