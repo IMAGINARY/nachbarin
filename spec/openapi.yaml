@@ -1,0 +1,647 @@
+openapi: 3.1.0
+
+info:
+  title: nachbarin
+  version: '1.0.0'
+  summary: Data-capture API for museum exhibits.
+  description: |
+    Exhibition software ("apps") POSTs records of visitor interactions; an operator bulk-downloads
+    them incrementally. Both operations live on `/v1/records` — POST to write, GET to read.
+
+    ## Identity
+
+    Every request authenticates with `Authorization: Bearer <key>`. The key alone determines who the
+    caller is: no exhibit or installation field is ever read from the request body, so a client
+    cannot misreport its identity. Keys come in two kinds, and the kind is a property of the key
+    rather than something the caller selects:
+
+    | Key kind       | May POST | May GET | Identifies                       |
+    |----------------|----------|---------|----------------------------------|
+    | `installation` | yes      | no      | one physical install of one app  |
+    | `read`         | no       | yes     | the bulk-download operator       |
+
+    Using a key for the operation it does not permit is `403`, not `401`. An absent, malformed,
+    unknown, or revoked key is `401` — unknown and revoked are deliberately indistinguishable.
+
+    ## Errors
+
+    Every error response carries a machine-readable `error` code and, usually, a human-readable
+    `message`. Branch on `error`; treat `message` as prose that may be reworded at any time.
+
+    Two responses are not attached to an operation below, because they arise before the request is
+    matched to one:
+
+    - `404` `not_found` — any path other than `/v1/records`, including `/v1/records/` with a
+      trailing slash. There is no trailing-slash normalization.
+    - `405` `method_not_allowed` — any method other than GET or POST on `/v1/records`, with an
+      `Allow: GET, POST` header.
+
+    ## Implementation status
+
+    Storage is not implemented yet. A request that passes routing, authentication, and validation
+    currently answers `501` `not_implemented` instead of reaching the database. Every other
+    documented behaviour is live.
+  license:
+    name: MIT
+    url: https://github.com/elondaits/nachbarin/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8787
+    description: Local dev server (`npm run dev`)
+  - url: https://{host}
+    description: Deployed Worker
+    variables:
+      host:
+        default: nachbarin.example.workers.dev
+        description: The Worker's hostname.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: records
+    description: Visitor-interaction records.
+
+paths:
+  /v1/records:
+    post:
+      tags: [records]
+      operationId: postRecords
+      summary: Ingest a batch of records from one installation.
+      description: |
+        Requires an `installation` key; a `read` key gets `403`.
+
+        The batch shape exists because clients queue records while offline and flush the queue
+        later. The response is `200` whenever the *request* is well-formed — the fate of each
+        individual record is reported separately in `results`, so a flush can partially succeed.
+
+        A client drops from its queue every record acknowledged as `created`, `duplicate`, **or**
+        `rejected`, and retries only what it did not hear back about. That makes each of those three
+        a permanent verdict: `duplicate` means "we already have it", and `rejected` means "never
+        send this again". A transient server-side failure is therefore never a per-record outcome —
+        it surfaces as `500` or `503` for the whole batch, and the client retries it. Retrying is
+        safe because `client_id` makes writes idempotent.
+
+        `results` is **positionally aligned** with the submitted `records`: same length, same order.
+        It is deliberately not keyed by `client_id`, because nothing stops a batch from carrying the
+        same `client_id` twice — position is the only total mapping.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WriteRequest'
+            examples:
+              batch:
+                summary: Two queued records flushed together
+                value:
+                  records:
+                    - client_id: 3f8a1c2e-7b40-4d6a-9e11-0c5f8a2b3d41
+                      created_at: '2026-07-15T14:03:22+02:00'
+                      engine_version: engine-1.4.2
+                      content_version: 'sha256:ab12cd34'
+                      app_data:
+                        nodes: [['q1', 3]]
+                    - client_id: 9c01f5d8-2a63-4e17-8b90-1d4e7f6a2c58
+                      created_at: '2026-07-15T14:07:05+02:00'
+                      engine_version: engine-1.4.2
+                      app_data:
+                        nodes: [['q1', 1], ['q2', 4]]
+      responses:
+        '200':
+          description: |
+            The request was well-formed. Individual records may still have been rejected — inspect
+            every entry of `results`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WriteResponse'
+              examples:
+                mixed:
+                  summary: One stored, one already known, one refused
+                  value:
+                    results:
+                      - client_id: 3f8a1c2e-7b40-4d6a-9e11-0c5f8a2b3d41
+                        status: created
+                      - client_id: 9c01f5d8-2a63-4e17-8b90-1d4e7f6a2c58
+                        status: duplicate
+                      - client_id: 77de4b91-6c05-4a2f-b3e8-5f019d6c8a24
+                        status: rejected
+                        error: payload_too_large
+                        message: 'app_data is 92160 bytes; the limit is 65536'
+        '400':
+          description: |
+            The request as a whole is unusable, so no record in it was stored. Distinct from a
+            per-record rejection, which still returns `200`.
+
+            Codes: `invalid_json` (body is not valid UTF-8, or not valid JSON), `invalid_request`
+            (body is not an object, `records` is missing or not an array, or an unknown top-level
+            field is present), `batch_too_large` (more than 100 records).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: batch_too_large
+                message: '250 records; the maximum is 100'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The key is valid but may not write records — i.e. it is a `read` key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: forbidden
+                message: this key may not write records
+        '413':
+          description: |
+            The request body exceeds 8 MiB. Enforced by a streaming byte counter, so a lying or
+            absent `Content-Length` does not evade it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: payload_too_large
+                message: request body exceeds 8388608 bytes
+        '415':
+          description: '`Content-Type` is missing or is not `application/json`. Parameters such as `; charset=utf-8` are ignored.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: unsupported_media_type
+                message: Content-Type must be application/json
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+    get:
+      tags: [records]
+      operationId: getRecords
+      summary: Download records incrementally.
+      description: |
+        Requires a `read` key; an `installation` key gets `403`.
+
+        Pages are walked with a cursor: pass the previous response's `next_after_id` as `after_id`
+        until `has_more` is `false`.
+
+        **`records.length < limit` does not mean end-of-stream.** Only `has_more: false` does. A
+        page may be short because it hit the response byte budget (8 MiB), which is normal rather
+        than an error.
+
+        Unknown and repeated query parameters are rejected instead of ignored. A typo'd `?after=…`
+        would otherwise leave the cursor at its default of 0 and silently re-download the entire
+        corpus while reporting that all was well.
+      parameters:
+        - $ref: '#/components/parameters/afterId'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/exhibit'
+        - $ref: '#/components/parameters/installation'
+        - $ref: '#/components/parameters/engineVersion'
+        - $ref: '#/components/parameters/contentVersion'
+      responses:
+        '200':
+          description: A page of records, ordered by `id` ascending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadResponse'
+              examples:
+                page:
+                  summary: A page with more to follow
+                  value:
+                    records:
+                      - id: 184003
+                        exhibit_id: exhibit-1
+                        installation_id: install-a
+                        client_id: 3f8a1c2e-7b40-4d6a-9e11-0c5f8a2b3d41
+                        created_at: '2026-07-15T14:03:22+02:00'
+                        received_at: '2026-07-15T12:04:01.221Z'
+                        engine_version: engine-1.4.2
+                        content_version: 'sha256:ab12cd34'
+                        app_data:
+                          nodes: [['q1', 3]]
+                    next_after_id: 184003
+                    has_more: true
+                empty:
+                  summary: Caught up — `next_after_id` echoes the cursor passed in
+                  value:
+                    records: []
+                    next_after_id: 184003
+                    has_more: false
+        '400':
+          description: |
+            A query parameter is unusable. Code is always `invalid_request`: an unknown or repeated
+            parameter, a malformed `after_id`, a `limit` outside 1–1000, or a filter value that is
+            empty or over its length bound.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: invalid_request
+                message: 'unknown query parameter(s): after'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The key is valid but may not read records — i.e. it is an `installation` key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: forbidden
+                message: this key may not read records
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        An installation key or a read key, depending on the operation. The scheme name is
+        case-insensitive per RFC 9110.
+
+  parameters:
+    afterId:
+      name: after_id
+      in: query
+      required: false
+      description: |
+        Exclusive lower bound on `id` — the pagination cursor. Defaults to 0, i.e. from the
+        beginning. The cursor is the autoincrement `id` rather than a timestamp: unambiguous,
+        collision-free, and trivially resumable.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+        default: 0
+        # Values above 2^53-1 are rejected rather than silently rounded, even though the column is
+        # a bigserial. It takes ~9 quadrillion records to matter, but the cursor is the contract.
+        maximum: 9007199254740991
+      example: 184002
+    limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Maximum records per page. A page may still come back shorter — see `has_more`. `limit=0` is
+        rejected rather than read as "empty page", since it would poll forever without advancing.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+      example: 1000
+    exhibit:
+      name: exhibit
+      in: query
+      required: false
+      description: Return only records from this exhibit.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      example: exhibit-1
+    installation:
+      name: installation
+      in: query
+      required: false
+      description: Return only records from this installation.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+      example: install-a
+    engineVersion:
+      name: engine_version
+      in: query
+      required: false
+      description: Return only records with exactly this `engine_version`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+      example: engine-1.4.2
+    contentVersion:
+      name: content_version
+      in: query
+      required: false
+      description: |
+        Return only records with exactly this `content_version`. Records whose `content_version` is
+        null never match a filter value; there is no way to filter *for* null.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+      example: 'sha256:ab12cd34'
+
+  responses:
+    Unauthorized:
+      description: |
+        No key, a malformed `Authorization` header, or a key that is unknown or revoked. The last
+        two are indistinguishable by design.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unauthorized
+            message: a valid Bearer key is required
+    InternalError:
+      description: |
+        An unexpected server-side failure. Carries no `message`: internals must not reach the
+        client. Nothing was necessarily stored or not stored — retry the batch, which `client_id`
+        makes safe.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: internal_error
+    NotImplemented:
+      description: |
+        The request was accepted and validated, but storage is not implemented yet. Every request
+        that gets this far currently ends here.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: not_implemented
+            message: RecordStore.insert is not implemented yet
+    Unavailable:
+      description: |
+        Storage is temporarily unavailable. Retryable: keep the batch queued and send it again.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: string
+          example: '30'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unavailable
+            message: storage is temporarily unavailable
+
+  schemas:
+    ErrorCode:
+      type: string
+      description: |
+        Machine-readable failure code. Stable — branch on this rather than on `message`. The same
+        vocabulary is used at the top level of an error response and inside a per-record result.
+      enum:
+        - invalid_json
+        - invalid_request
+        - invalid_field
+        - batch_too_large
+        - unauthorized
+        - forbidden
+        - not_found
+        - method_not_allowed
+        - payload_too_large
+        - unsupported_media_type
+        - internal_error
+        - not_implemented
+        - unavailable
+
+    Error:
+      type: object
+      description: The body of every error response.
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable prose. Absent on `internal_error`. Never parse this.
+      additionalProperties: false
+
+    AppData:
+      description: |
+        The payload the app wants to record. Opaque: never interpreted, never validated beyond the
+        two constraints below, and returned to readers exactly as submitted. Any JSON value is
+        valid — object, array, string, number, boolean, or null. Only presence is required, so
+        `"app_data": null` is a valid record while omitting the field is not.
+
+        Two constraints, both about storage rather than meaning:
+
+        - At most 65536 bytes, measured on the compact `JSON.stringify` form rather than the
+          received bytes. The limit is therefore independent of how you format your JSON, and you
+          can predict the verdict exactly by stringifying locally.
+        - No NUL (`U+0000`) inside any string, which Postgres `jsonb` cannot hold.
+
+    ClientId:
+      type: string
+      format: uuid
+      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      description: |
+        Client-generated UUID, unique per `(installation, client_id)` — this is the idempotency key
+        that makes retrying a batch safe. Any UUID version is accepted; v7 for time-ordering is a
+        sensible choice. Normalized to lowercase on the way in, so a reader always sees lowercase.
+
+        The nil UUID (`00000000-0000-0000-0000-000000000000`) is rejected. A client emitting it for
+        every record — the classic uninitialized-variable bug — would store exactly one record and
+        get `duplicate` for every one after it. Since `duplicate` is an acknowledgment, the client
+        would drop each from its queue: silent, total data loss that looks healthy from outside.
+      example: 3f8a1c2e-7b40-4d6a-9e11-0c5f8a2b3d41
+
+    CreatedAt:
+      type: string
+      format: date-time
+      pattern: '^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$'
+      description: |
+        When the app created the record, RFC 3339 with an explicit UTC offset (`Z` counts). Stored
+        verbatim: the offset carries the exhibit's local wall-clock time, which is the analytically
+        interesting value ("visits peak at 14:00 local"), so it is never normalized to UTC.
+
+        Validation is stricter than the pattern: every component is range-checked, days-in-month and
+        leap years included, so `2026-02-30` is rejected rather than rolled over to March 2nd. Leap
+        seconds (`:60`) are refused — legal RFC 3339, but nothing downstream can represent one.
+
+        Out-of-range clocks are *not* rejected. A dead RTC reporting 1970 is accepted and stored;
+        `received_at` sits beside `created_at` precisely so that skew stays visible instead of being
+        silently dropped at the door.
+      example: '2026-07-15T14:03:22+02:00'
+
+    NewRecord:
+      type: object
+      description: |
+        One submitted record. Unknown fields are rejected rather than ignored — put anything the
+        service does not define inside `app_data`.
+      required: [client_id, created_at, engine_version, app_data]
+      properties:
+        client_id:
+          $ref: '#/components/schemas/ClientId'
+        created_at:
+          $ref: '#/components/schemas/CreatedAt'
+        engine_version:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Version of the exhibition software that produced this record.
+          example: engine-1.4.2
+        content_version:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Version of the content the software was showing. Optional: omit it when the app has no
+            meaningful notion of one, and it is stored as null. Omitting it and sending null are
+            different — null is not an accepted value here.
+          example: 'sha256:ab12cd34'
+        app_data:
+          $ref: '#/components/schemas/AppData'
+      additionalProperties: false
+
+    WriteRequest:
+      type: object
+      required: [records]
+      properties:
+        records:
+          type: array
+          maxItems: 100
+          description: |
+            The batch. May be empty. A batch over the limit is rejected whole with `batch_too_large`
+            before any per-record validation runs.
+          items:
+            $ref: '#/components/schemas/NewRecord'
+      additionalProperties: false
+
+    RecordResult:
+      type: object
+      description: The fate of one submitted record.
+      required: [client_id, status]
+      properties:
+        client_id:
+          type: [string, 'null']
+          description: |
+            Echoed back for readability, not as a key — match results to records by position. Null
+            only when the submitted `client_id` was itself unusable: it is validated before every
+            other field, so a null echo never means a valid identifier was lost while some other
+            field failed. A non-string `client_id` also echoes as null rather than making this field
+            polymorphic.
+        status:
+          type: string
+          enum: [created, duplicate, rejected]
+          description: |
+            - `created` — stored.
+            - `duplicate` — a record with this `(installation, client_id)` already exists. This is
+              an acknowledgment, not an error: to a client retrying because it never heard back, it
+              means exactly "we have it".
+            - `rejected` — failed validation and will never be accepted. Do not retry; `error` says
+              why.
+
+            All three are permanent. A transient failure is never reported here.
+        error:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable prose, present with `rejected`. Never parse this.
+      additionalProperties: false
+
+    WriteResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          description: |
+            Positionally aligned with the submitted `records`: same length, same order. Not keyed by
+            `client_id` — a batch may legitimately carry the same one twice.
+          items:
+            $ref: '#/components/schemas/RecordResult'
+      additionalProperties: false
+
+    StoredRecord:
+      type: object
+      description: A persisted record, as returned to a reader.
+      required:
+        - id
+        - exhibit_id
+        - installation_id
+        - client_id
+        - created_at
+        - received_at
+        - engine_version
+        - content_version
+        - app_data
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Monotonic server-assigned identifier. This is the download cursor.
+          example: 184003
+        exhibit_id:
+          type: string
+          description: Resolved from the writing installation's key, never from the submitted body.
+          example: exhibit-1
+        installation_id:
+          type: string
+          description: Resolved from the writing installation's key, never from the submitted body.
+          example: install-a
+        client_id:
+          $ref: '#/components/schemas/ClientId'
+        created_at:
+          $ref: '#/components/schemas/CreatedAt'
+        received_at:
+          type: string
+          format: date-time
+          description: |
+            Server clock at ingestion, UTC. Sits alongside `created_at` so that clock skew on the
+            exhibit stays detectable. One timestamp is used for a whole batch.
+          example: '2026-07-15T12:04:01.221Z'
+        engine_version:
+          type: string
+          example: engine-1.4.2
+        content_version:
+          type: [string, 'null']
+          description: Null when the record was submitted without one.
+          example: 'sha256:ab12cd34'
+        app_data:
+          $ref: '#/components/schemas/AppData'
+      additionalProperties: false
+
+    ReadResponse:
+      type: object
+      required: [records, next_after_id, has_more]
+      properties:
+        records:
+          type: array
+          description: Ordered by `id` ascending.
+          items:
+            $ref: '#/components/schemas/StoredRecord'
+        next_after_id:
+          type: integer
+          format: int64
+          description: |
+            Pass as `after_id` to fetch the next page. Always a number: on an empty page it echoes
+            the cursor you passed in, so the loop needs no special case.
+          example: 185002
+        has_more:
+          type: boolean
+          description: |
+            Whether records exist beyond the last one returned. **This is the only end-of-stream
+            signal.** A short page is not one — see the operation description.
+      additionalProperties: false
