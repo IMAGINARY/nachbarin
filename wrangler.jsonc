@@ -6,7 +6,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "nachbarin",
 	"main": "src/index.ts",
-	"compatibility_date": "2026-07-15",
+	"compatibility_date": "2026-07-09",
 	"observability": {
 		"enabled": true
 	},
