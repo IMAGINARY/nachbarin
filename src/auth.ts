@@ -5,11 +5,16 @@
  * cannot be spoofed or misconfigured, and a leaked key is revocable without affecting anything else.
  */
 
-/** A physical installation of an exhibit app. Write-only: installations can never read. */
+/**
+ * One installation — an app running at an instance. Write-only: installations can never read.
+ *
+ * `app` names the software module; `instance` names where it runs (a museum, or one copy of a
+ * travelling exhibition). Neither identifies a record on its own: the pair does.
+ */
 export interface InstallationPrincipal {
   readonly kind: 'installation';
-  readonly exhibitId: string;
-  readonly installationId: string;
+  readonly appId: string;
+  readonly instanceId: string;
 }
 
 /** The bulk/incremental download identity. Read-only. */

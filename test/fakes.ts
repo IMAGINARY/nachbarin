@@ -43,17 +43,21 @@ export class FakeRecordStore implements RecordStore {
     if (this.failWith !== null) return Promise.reject(this.failWith);
 
     const outcomes = records.map((record) => {
-      // Dedupe is scoped to (installation_id, client_id): the same client_id from a different
-      // installation is a different record.
+      // Dedupe is scoped to the installation -- the (app_id, instance_id) pair -- and never to
+      // instance_id alone: that is `default` for most apps, so two apps at the same instance would
+      // collide and the second one's records would be dropped as acknowledged duplicates.
       const exists = this.rows.some(
-        (row) => row.installation_id === principal.installationId && row.client_id === record.clientId,
+        (row) =>
+          row.app_id === principal.appId &&
+          row.instance_id === principal.instanceId &&
+          row.client_id === record.clientId,
       );
       if (exists) return 'duplicate' as const;
 
       this.rows.push({
         id: this.nextId++,
-        exhibit_id: principal.exhibitId,
-        installation_id: principal.installationId,
+        app_id: principal.appId,
+        instance_id: principal.instanceId,
         client_id: record.clientId,
         created_at: record.createdAt,
         received_at: receivedAt.toISOString(),
@@ -73,8 +77,8 @@ export class FakeRecordStore implements RecordStore {
 
     const matching = this.rows
       .filter((row) => row.id > query.afterId)
-      .filter((row) => query.exhibitId === null || row.exhibit_id === query.exhibitId)
-      .filter((row) => query.installationId === null || row.installation_id === query.installationId)
+      .filter((row) => query.appId === null || row.app_id === query.appId)
+      .filter((row) => query.instanceId === null || row.instance_id === query.instanceId)
       .filter((row) => query.engineVersion === null || row.engine_version === query.engineVersion)
       // Mirrors SQL equality: a NULL content_version never matches a filter value.
       .filter((row) => query.contentVersion === null || row.content_version === query.contentVersion)
@@ -90,18 +94,31 @@ export class FakeRecordStore implements RecordStore {
 
 export const INSTALLATION_A: InstallationPrincipal = {
   kind: 'installation',
-  exhibitId: 'exhibit-1',
-  installationId: 'install-a',
+  appId: 'app-1',
+  instanceId: 'instance-a',
 };
 
+/** Same app as A, different instance. */
 export const INSTALLATION_B: InstallationPrincipal = {
   kind: 'installation',
-  exhibitId: 'exhibit-1',
-  installationId: 'install-b',
+  appId: 'app-1',
+  instanceId: 'instance-b',
+};
+
+/**
+ * Same *instance* as A, different app — the other axis of the dedupe scope, and the one that
+ * `instance_id`-only dedupe gets wrong. Instances are shared in practice: two apps in the same
+ * museum both sit at `instance-a`, and by default both would sit at `default`.
+ */
+export const INSTALLATION_C: InstallationPrincipal = {
+  kind: 'installation',
+  appId: 'app-2',
+  instanceId: 'instance-a',
 };
 
 export const KEY_A = 'key-installation-a';
 export const KEY_B = 'key-installation-b';
+export const KEY_C = 'key-installation-c';
 export const KEY_READ = 'key-read';
 
 export const FIXED_NOW = new Date('2026-07-15T12:00:00.000Z');
@@ -111,11 +128,12 @@ export interface TestDeps extends Deps {
   readonly recordStore: FakeRecordStore;
 }
 
-/** Deps pre-wired with two installation keys and one read key. */
+/** Deps pre-wired with three installation keys and one read key. */
 export function makeDeps(): TestDeps {
   const keyStore = new FakeKeyStore()
     .set(KEY_A, INSTALLATION_A)
     .set(KEY_B, INSTALLATION_B)
+    .set(KEY_C, INSTALLATION_C)
     .set(KEY_READ, { kind: 'read' });
 
   return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW };

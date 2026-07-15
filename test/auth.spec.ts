@@ -69,13 +69,13 @@ describe('identity comes from the key', () => {
     await handleRequest(postRequest({ records: [validRecord()] }, KEY_A), deps);
     await handleRequest(postRequest({ records: [validRecord()] }, KEY_B), deps);
 
-    expect(deps.recordStore.rows.map((row) => row.installation_id)).toEqual(['install-a', 'install-b']);
+    expect(deps.recordStore.rows.map((row) => row.instance_id)).toEqual(['instance-a', 'instance-b']);
   });
 
   it('refuses a body that tries to declare its own identity', async () => {
     const deps = makeDeps();
     const response = await handleRequest(
-      postRequest({ records: [validRecord({ installation_id: 'install-b' })] }, KEY_A),
+      postRequest({ records: [validRecord({ instance_id: 'instance-b' })] }, KEY_A),
       deps,
     );
 

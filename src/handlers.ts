@@ -64,8 +64,8 @@ const encoder = new TextEncoder();
  * `client_id` twice, so a client keying by it would silently drop an entry. Position is the only
  * total mapping.
  *
- * No exhibit or installation field is read from the body. Identity comes from the API key alone,
- * so a client cannot misreport who it is.
+ * No app or instance field is read from the body. Identity comes from the API key alone, so a
+ * client cannot misreport who it is.
  */
 export async function handlePostRecords(
   request: Request,
@@ -143,7 +143,7 @@ function readClientId(raw: unknown): string | null {
  *
  * ```
  * GET /v1/records?after_id=184002&limit=1000
- *               [&exhibit=…][&installation=…]
+ *               [&app=…][&instance=…]
  *               [&engine_version=…][&content_version=…]
  * Authorization: Bearer <read-key>
  *

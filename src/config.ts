@@ -26,8 +26,12 @@ export const MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024;
 /** Bound on `engine_version` / `content_version`. They are unbounded `text` in the schema. */
 export const MAX_VERSION_LENGTH = 256;
 
-/** Bound on `exhibit` / `installation` read filter values. */
-export const MAX_ID_LENGTH = 128;
+/**
+ * Bound on `app` / `instance` read filter values. Matches the length limit on the corresponding
+ * schema columns, so one number describes one concept. 100 is the longest a GitHub repository name
+ * can be, and an app is usually named after one.
+ */
+export const MAX_ID_LENGTH = 100;
 
 /** Page size used when a read request omits `limit`. */
 export const READ_LIMIT_DEFAULT = 100;

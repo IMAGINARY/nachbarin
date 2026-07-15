@@ -254,7 +254,7 @@ export function validateWriteEnvelope(body: unknown): Result<unknown[], Failure>
 // Read
 // ---------------------------------------------------------------------------
 
-const QUERY_KEYS = ['after_id', 'limit', 'exhibit', 'installation', 'engine_version', 'content_version'];
+const QUERY_KEYS = ['after_id', 'limit', 'app', 'instance', 'engine_version', 'content_version'];
 
 /**
  * Parses a non-negative integer from a query parameter.
@@ -322,11 +322,11 @@ export function validateReadQuery(params: URLSearchParams): Result<ListQuery, Fa
     limit = parsed;
   }
 
-  const exhibitId = optionalFilter(params.get('exhibit'), 'exhibit', MAX_ID_LENGTH);
-  if (!exhibitId.ok) return exhibitId;
+  const appId = optionalFilter(params.get('app'), 'app', MAX_ID_LENGTH);
+  if (!appId.ok) return appId;
 
-  const installationId = optionalFilter(params.get('installation'), 'installation', MAX_ID_LENGTH);
-  if (!installationId.ok) return installationId;
+  const instanceId = optionalFilter(params.get('instance'), 'instance', MAX_ID_LENGTH);
+  if (!instanceId.ok) return instanceId;
 
   const engineVersion = optionalFilter(params.get('engine_version'), 'engine_version', MAX_VERSION_LENGTH);
   if (!engineVersion.ok) return engineVersion;
@@ -337,8 +337,8 @@ export function validateReadQuery(params: URLSearchParams): Result<ListQuery, Fa
   return ok({
     afterId,
     limit,
-    exhibitId: exhibitId.value,
-    installationId: installationId.value,
+    appId: appId.value,
+    instanceId: instanceId.value,
     engineVersion: engineVersion.value,
     contentVersion: contentVersion.value,
   });

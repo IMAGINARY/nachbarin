@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { handleRequest } from '../src/app';
 import { MAX_REQUEST_BODY_BYTES } from '../src/config';
 import { StorageUnavailableError } from '../src/storage';
-import { FIXED_NOW, KEY_A, KEY_B, makeDeps, postRequest, uuid, validRecord } from './fakes';
+import { FIXED_NOW, KEY_A, KEY_B, KEY_C, makeDeps, postRequest, uuid, validRecord } from './fakes';
 
 interface WriteResponse {
   results: { client_id: string | null; status: string; error?: string; message?: string }[];
@@ -104,9 +104,11 @@ describe('results alignment', () => {
 });
 
 describe('dedupe scope', () => {
-  // Dedupe is on (installation_id, client_id): two installations that happen to mint the same id
-  // are storing two genuinely different records.
-  it('does not deduplicate across installations', async () => {
+  // Dedupe is on (installation, client_id) -- the (app_id, instance_id) pair -- so two
+  // installations that happen to mint the same id are storing two genuinely different records.
+  // These two tests cover the two axes the pair is made of; both must hold.
+
+  it('does not deduplicate across instances of one app', async () => {
     const deps = makeDeps();
     const record = validRecord();
 
@@ -115,6 +117,23 @@ describe('dedupe scope', () => {
 
     expect((await a.json<WriteResponse>()).results[0].status).toBe('created');
     expect((await b.json<WriteResponse>()).results[0].status).toBe('created');
+    expect(deps.recordStore.rows).toHaveLength(2);
+  });
+
+  // The other axis, and the one that is easy to get wrong: KEY_A and KEY_C share an instance and
+  // differ only by app. Deduping on instance_id alone would report the second one `duplicate` --
+  // which this protocol defines as success, so the client would drop it from its queue and the
+  // record would be lost silently. Instances are shared in practice: two apps in one museum, and
+  // by default every app sits at `default`.
+  it('does not deduplicate across apps at one instance', async () => {
+    const deps = makeDeps();
+    const record = validRecord();
+
+    const a = await handleRequest(postRequest({ records: [record] }, KEY_A), deps);
+    const c = await handleRequest(postRequest({ records: [record] }, KEY_C), deps);
+
+    expect((await a.json<WriteResponse>()).results[0].status).toBe('created');
+    expect((await c.json<WriteResponse>()).results[0].status).toBe('created');
     expect(deps.recordStore.rows).toHaveLength(2);
   });
 });

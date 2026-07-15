@@ -187,10 +187,8 @@ describe('unknown fields', () => {
   });
 
   // Identity comes from the key alone; a body claiming otherwise is a client bug worth surfacing.
-  it('rejects a body-supplied installation_id', () => {
-    expect(expectFail(validateRecord(validRecord({ installation_id: 'spoofed' }))).message).toContain(
-      'installation_id',
-    );
+  it('rejects a body-supplied instance_id', () => {
+    expect(expectFail(validateRecord(validRecord({ instance_id: 'spoofed' }))).message).toContain('instance_id');
   });
 });
 
@@ -223,12 +221,12 @@ describe('read query', () => {
 
   it('parses filters', () => {
     expect(
-      expectOk(query('after_id=184002&limit=1000&exhibit=e1&installation=i1&engine_version=v1&content_version=c1')),
+      expectOk(query('after_id=184002&limit=1000&app=a1&instance=i1&engine_version=v1&content_version=c1')),
     ).toEqual({
       afterId: 184002,
       limit: 1000,
-      exhibitId: 'e1',
-      installationId: 'i1',
+      appId: 'a1',
+      instanceId: 'i1',
       engineVersion: 'v1',
       contentVersion: 'c1',
     });
@@ -269,8 +267,12 @@ describe('read query', () => {
     expect(expectFail(query('limit=10&limit=20')).message).toContain('limit');
   });
 
+  // The boundary is pinned at a literal 100 rather than read from MAX_ID_LENGTH: it has to match
+  // the length CHECK on the schema columns, and a test that imports the constant would happily
+  // follow it if someone changed it out from under the schema.
   it('rejects empty and over-long filter values', () => {
-    expect(expectFail(query('exhibit=')).code).toBe('invalid_request');
-    expect(expectFail(query(`installation=${'x'.repeat(129)}`)).code).toBe('invalid_request');
+    expect(expectFail(query('app=')).code).toBe('invalid_request');
+    expect(query(`instance=${'x'.repeat(100)}`).ok).toBe(true);
+    expect(expectFail(query(`instance=${'x'.repeat(101)}`)).code).toBe('invalid_request');
   });
 });

@@ -11,14 +11,18 @@ info:
     ## Identity
 
     Every request authenticates with `Authorization: Bearer <key>`. The key alone determines who the
-    caller is: no exhibit or installation field is ever read from the request body, so a client
-    cannot misreport its identity. Keys come in two kinds, and the kind is a property of the key
-    rather than something the caller selects:
+    caller is: no app or instance field is ever read from the request body, so a client cannot
+    misreport its identity. Keys come in two kinds, and the kind is a property of the key rather
+    than something the caller selects:
 
     | Key kind       | May POST | May GET | Identifies                       |
     |----------------|----------|---------|----------------------------------|
-    | `installation` | yes      | no      | one physical install of one app  |
+    | `installation` | yes      | no      | one app running at one instance  |
     | `read`         | no       | yes     | the bulk-download operator       |
+
+    An **installation** is the `(app, instance)` pair: `app` names the software module, `instance`
+    names where it runs — a museum, or one copy of a travelling exhibition. A record belongs to an
+    installation, and neither half identifies it alone.
 
     Using a key for the operation it does not permit is `403`, not `401`. An absent, malformed,
     unknown, or revoked key is `401` — unknown and revoked are deliberately indistinguishable.
@@ -202,8 +206,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/afterId'
         - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/exhibit'
-        - $ref: '#/components/parameters/installation'
+        - $ref: '#/components/parameters/app'
+        - $ref: '#/components/parameters/instance'
         - $ref: '#/components/parameters/engineVersion'
         - $ref: '#/components/parameters/contentVersion'
       responses:
@@ -219,8 +223,8 @@ paths:
                   value:
                     records:
                       - id: 184003
-                        exhibit_id: exhibit-1
-                        installation_id: install-a
+                        app_id: future-mobility-simulator
+                        instance_id: museum-x
                         client_id: 3f8a1c2e-7b40-4d6a-9e11-0c5f8a2b3d41
                         created_at: '2026-07-15T14:03:22+02:00'
                         received_at: '2026-07-15T12:04:01.221Z'
@@ -306,26 +310,26 @@ components:
         maximum: 1000
         default: 100
       example: 1000
-    exhibit:
-      name: exhibit
+    app:
+      name: app
       in: query
       required: false
-      description: Return only records from this exhibit.
+      description: Return only records produced by this app.
       schema:
         type: string
         minLength: 1
-        maxLength: 128
-      example: exhibit-1
-    installation:
-      name: installation
+        maxLength: 100
+      example: future-mobility-simulator
+    instance:
+      name: instance
       in: query
       required: false
-      description: Return only records from this installation.
+      description: Return only records from this instance. Combine with `app` to select one installation.
       schema:
         type: string
         minLength: 1
-        maxLength: 128
-      example: install-a
+        maxLength: 100
+      example: museum-x
     engineVersion:
       name: engine_version
       in: query
@@ -579,8 +583,8 @@ components:
       description: A persisted record, as returned to a reader.
       required:
         - id
-        - exhibit_id
-        - installation_id
+        - app_id
+        - instance_id
         - client_id
         - created_at
         - received_at
@@ -593,14 +597,14 @@ components:
           format: int64
           description: Monotonic server-assigned identifier. This is the download cursor.
           example: 184003
-        exhibit_id:
+        app_id:
           type: string
           description: Resolved from the writing installation's key, never from the submitted body.
-          example: exhibit-1
-        installation_id:
+          example: future-mobility-simulator
+        instance_id:
           type: string
           description: Resolved from the writing installation's key, never from the submitted body.
-          example: install-a
+          example: museum-x
         client_id:
           $ref: '#/components/schemas/ClientId'
         created_at:

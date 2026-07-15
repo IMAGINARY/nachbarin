@@ -37,7 +37,7 @@ export interface KeyStore {
  * time makes the measured size and the stored bytes provably identical.
  */
 export interface NewRecord {
-  /** Canonical lowercase UUID. Unique with `installation_id`; this is the idempotency key. */
+  /** Canonical lowercase UUID. Unique within an installation; this is the idempotency key. */
   readonly clientId: string;
   /** The client's RFC 3339 string, verbatim — offset preserved rather than normalized to UTC. */
   readonly createdAt: string;
@@ -62,8 +62,8 @@ export type InsertOutcome = 'created' | 'duplicate';
 export interface StoredRecord {
   /** Monotonic. This is the incremental-download cursor. */
   readonly id: number;
-  readonly exhibit_id: string;
-  readonly installation_id: string;
+  readonly app_id: string;
+  readonly instance_id: string;
   readonly client_id: string;
   /** Client-reported creation time. */
   readonly created_at: string;
@@ -78,8 +78,8 @@ export interface ListQuery {
   /** Exclusive lower bound on `id`. Zero means "from the beginning". */
   readonly afterId: number;
   readonly limit: number;
-  readonly exhibitId: string | null;
-  readonly installationId: string | null;
+  readonly appId: string | null;
+  readonly instanceId: string | null;
   readonly engineVersion: string | null;
   readonly contentVersion: string | null;
 }
@@ -94,7 +94,13 @@ export interface ListPage {
 
 export interface RecordStore {
   /**
-   * Persists a batch, deduplicating on `(installation_id, client_id)`.
+   * Persists a batch, deduplicating on `(installation, client_id)`.
+   *
+   * The scope is the **installation** — the `(app_id, instance_id)` pair — and never `instance_id`
+   * alone. `instance_id` is not globally unique: it defaults to `default`, so two different apps at
+   * the same instance would collide, and the second one's records would come back `duplicate` and
+   * be dropped from its queue as acknowledged. The storage schema expresses the pair as a single
+   * surrogate key, which makes `(installation, client_id)` unambiguous.
    *
    * @param receivedAt a single server timestamp for the whole batch.
    * @returns outcomes positionally aligned with `records` — same length, same order.

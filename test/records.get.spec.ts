@@ -14,8 +14,8 @@ interface ReadResponse {
 function row(id: number, overrides: Partial<StoredRecord> = {}): StoredRecord {
   return {
     id,
-    exhibit_id: 'exhibit-1',
-    installation_id: 'install-a',
+    app_id: 'app-1',
+    instance_id: 'instance-a',
     client_id: `3f8a0000-0000-4000-8000-${id.toString(16).padStart(12, '0')}`,
     created_at: '2026-07-15T14:03:22+02:00',
     received_at: '2026-07-15T12:00:00.000Z',
@@ -112,12 +112,12 @@ describe('filters', () => {
   it('filters by each identity and version field', async () => {
     const deps = makeDeps();
     deps.recordStore.rows.push(
-      row(1, { exhibit_id: 'e1', installation_id: 'i1', engine_version: 'v1', content_version: 'c1' }),
-      row(2, { exhibit_id: 'e2', installation_id: 'i2', engine_version: 'v2', content_version: 'c2' }),
+      row(1, { app_id: 'a1', instance_id: 'i1', engine_version: 'v1', content_version: 'c1' }),
+      row(2, { app_id: 'a2', instance_id: 'i2', engine_version: 'v2', content_version: 'c2' }),
     );
 
-    expect((await read(deps, '?exhibit=e1')).body.records.map((r) => r.id)).toEqual([1]);
-    expect((await read(deps, '?installation=i2')).body.records.map((r) => r.id)).toEqual([2]);
+    expect((await read(deps, '?app=a1')).body.records.map((r) => r.id)).toEqual([1]);
+    expect((await read(deps, '?instance=i2')).body.records.map((r) => r.id)).toEqual([2]);
     expect((await read(deps, '?engine_version=v1')).body.records.map((r) => r.id)).toEqual([1]);
     expect((await read(deps, '?content_version=c2')).body.records.map((r) => r.id)).toEqual([2]);
   });
@@ -125,12 +125,12 @@ describe('filters', () => {
   it('combines filters', async () => {
     const deps = makeDeps();
     deps.recordStore.rows.push(
-      row(1, { installation_id: 'i1', content_version: 'c1' }),
-      row(2, { installation_id: 'i1', content_version: 'c2' }),
-      row(3, { installation_id: 'i2', content_version: 'c1' }),
+      row(1, { instance_id: 'i1', content_version: 'c1' }),
+      row(2, { instance_id: 'i1', content_version: 'c2' }),
+      row(3, { instance_id: 'i2', content_version: 'c1' }),
     );
 
-    expect((await read(deps, '?installation=i1&content_version=c1')).body.records.map((r) => r.id)).toEqual([1]);
+    expect((await read(deps, '?instance=i1&content_version=c1')).body.records.map((r) => r.id)).toEqual([1]);
   });
 
   // Documents a known gap: SQL equality never matches NULL, so now that content_version is
