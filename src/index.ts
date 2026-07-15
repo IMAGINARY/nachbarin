@@ -1,19 +1,32 @@
 /**
- * Welcome to Cloudflare Workers! This is your first worker.
+ * Worker entry point for the exhibit data-capture API.
  *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
+ * Wiring only. All request handling lives in `app.ts`, which takes its dependencies as an argument
+ * so it can be driven in tests without a database.
  *
- * Bind resources to your worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
+ * Storage is not implemented yet: both stores throw, which surfaces as 501 once a request gets
+ * past routing, authentication, and validation.
+ *
+ * - `npm run dev` to serve locally, `npm run deploy` to publish
+ * - Bindings go in `wrangler.jsonc`; run `npm run cf-typegen` afterwards to refresh `Env`
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+import { handleRequest } from './app';
+import { type Deps, notImplementedKeyStore, notImplementedRecordStore } from './storage';
+
+/** Takes no `Env` yet because there are no bindings; it gains one when storage is wired up. */
+function createDeps(): Deps {
+  return {
+    keyStore: notImplementedKeyStore,
+    recordStore: notImplementedRecordStore,
+    now: () => new Date(),
+  };
+}
+
 export default {
-  // eslint-disable-next-line @typescript-eslint/require-await,@typescript-eslint/no-unused-vars
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response("Hello World!");
-	},
+  fetch(request): Promise<Response> {
+    return handleRequest(request, createDeps());
+  },
 } satisfies ExportedHandler<Env>;
