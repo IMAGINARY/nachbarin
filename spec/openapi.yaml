@@ -11,18 +11,24 @@ info:
     ## Identity
 
     Every request authenticates with `Authorization: Bearer <key>`. The key alone determines who the
-    caller is: no app or instance field is ever read from the request body, so a client cannot
-    misreport its identity. Keys come in two kinds, and the kind is a property of the key rather
-    than something the caller selects:
+    caller is and what it may touch: no app or instance is ever read from the request body or the
+    query string, so a client can neither misreport its identity nor widen its own reach. Keys come
+    in two kinds, and the kind is a property of the key rather than something the caller selects:
 
-    | Key kind       | May POST | May GET | Identifies                       |
-    |----------------|----------|---------|----------------------------------|
-    | `installation` | yes      | no      | one app running at one instance  |
-    | `read`         | no       | yes     | the bulk-download operator       |
+    | Key kind | May POST | May GET | Scope                            |
+    |----------|----------|---------|----------------------------------|
+    | `write`  | yes      | no      | exactly one installation         |
+    | `read`   | no       | yes     | exactly one installation         |
 
     An **installation** is the `(app, instance)` pair: `app` names the software module, `instance`
     names where it runs — a museum, or one copy of a travelling exhibition. A record belongs to an
     installation, and neither half identifies it alone.
+
+    Every key grants exactly one installation, whatever its kind. A `read` key therefore downloads
+    that installation's records and no others, and `GET /v1/records` takes no app or instance
+    parameter — there is nothing for the caller to choose. There is no cross-installation key:
+    full-corpus export is an operator's direct SQL query against the database, deliberately not an
+    API capability, so no credential in circulation carries that authority.
 
     Using a key for the operation it does not permit is `403`, not `401`. An absent, malformed,
     unknown, or revoked key is `401` — unknown and revoked are deliberately indistinguishable.
@@ -42,9 +48,10 @@ info:
 
     ## Implementation status
 
-    Storage is not implemented yet. A request that passes routing, authentication, and validation
-    currently answers `501` `not_implemented` instead of reaching the database. Every other
-    documented behaviour is live.
+    Record storage is not implemented yet. A request that passes routing, authentication, and
+    validation and then actually needs records answers `501` `not_implemented` instead of reaching
+    them. Authentication itself is live and backed by the database, so every `401` and `403`
+    documented here is real. Every other documented behaviour is live.
   license:
     name: MIT
     url: https://github.com/elondaits/nachbarin/blob/main/LICENSE
@@ -73,7 +80,7 @@ paths:
       operationId: postRecords
       summary: Ingest a batch of records from one installation.
       description: |
-        Requires an `installation` key; a `read` key gets `403`.
+        Requires a `write` key; a `read` key gets `403`.
 
         The batch shape exists because clients queue records while offline and flush the queue
         later. The response is `200` whenever the *request* is well-formed — the fate of each
@@ -191,7 +198,13 @@ paths:
       operationId: getRecords
       summary: Download records incrementally.
       description: |
-        Requires a `read` key; an `installation` key gets `403`.
+        Requires a `read` key; a `write` key gets `403`.
+
+        Returns the records of the installation the key grants, and no others. There is no `app` or
+        `instance` parameter: which installation a download may see is decided by the key, not by
+        the caller, so there is nothing here to select. `engine_version` and `content_version` do
+        narrow the results, because they choose among the caller's own records rather than whose
+        records they are.
 
         Pages are walked with a cursor: pass the previous response's `next_after_id` as `after_id`
         until `has_more` is `false`.
@@ -202,12 +215,11 @@ paths:
 
         Unknown and repeated query parameters are rejected instead of ignored. A typo'd `?after=…`
         would otherwise leave the cursor at its default of 0 and silently re-download the entire
-        corpus while reporting that all was well.
+        corpus while reporting that all was well. `?app=` and `?instance=` are unknown parameters
+        and get the same `400`.
       parameters:
         - $ref: '#/components/parameters/afterId'
         - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/app'
-        - $ref: '#/components/parameters/instance'
         - $ref: '#/components/parameters/engineVersion'
         - $ref: '#/components/parameters/contentVersion'
       responses:
@@ -255,7 +267,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          description: The key is valid but may not read records — i.e. it is an `installation` key.
+          description: The key is valid but may not read records — i.e. it is a `write` key.
           content:
             application/json:
               schema:
@@ -276,7 +288,8 @@ components:
       type: http
       scheme: bearer
       description: |
-        An installation key or a read key, depending on the operation. The scheme name is
+        A write key or a read key, depending on the operation. Either way it grants exactly
+        one installation, which is the scope of the operation. The scheme name is
         case-insensitive per RFC 9110.
 
   parameters:
@@ -310,26 +323,6 @@ components:
         maximum: 1000
         default: 100
       example: 1000
-    app:
-      name: app
-      in: query
-      required: false
-      description: Return only records produced by this app.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 100
-      example: future-mobility-simulator
-    instance:
-      name: instance
-      in: query
-      required: false
-      description: Return only records from this instance. Combine with `app` to select one installation.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 100
-      example: museum-x
     engineVersion:
       name: engine_version
       in: query

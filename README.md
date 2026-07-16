@@ -23,7 +23,7 @@ npx wrangler d1 execute nachbarin --remote --command \
    VALUES ('future-mobility-simulator', 'museum-x', 'Deutsches Museum, north hall');"
 ```
 
-`instance_id` may be omitted; it defaults to `'default'`. Both are limited to 100 characters of `[a-zA-Z0-9._-]`, because they travel in URLs as `?app=` / `?instance=`.
+`instance_id` may be omitted; it defaults to `'default'`. Both are limited to 100 characters of `[a-zA-Z0-9._-]`: they are typed by hand into commands like the ones on this page and pasted into SQL, where a stray space or quote is invisible in the terminal and produces an identifier that matches nothing.
 
 ### Minting a key
 
@@ -39,11 +39,13 @@ Only the sha256 of a key is stored, so **the key is unrecoverable after this** �
 #    different hash, and so a key that 401s forever for no visible reason.
  HASH="$(printf %s "$KEY" | shasum -a 256 | cut -d' ' -f1)"
 
-# 3. Store the hash. `kind` must be stated; `label` is how you will identify this
-#    key later, since the hash tells you nothing.
+# 3. Store the hash. `kind` is 'write' (deposits records) or 'read' (downloads
+#    them); it must be stated, because nothing else in the row implies it.
+#    `label` is how you will identify this key later, since the hash tells you
+#    nothing.
 npx wrangler d1 execute nachbarin --remote --command \
   "INSERT INTO api_keys (key_hash, kind, installation_pk, label)
-   SELECT '$HASH', 'installation', id, 'Station 1, north entrance'
+   SELECT '$HASH', 'write', id, 'Station 1, north entrance'
    FROM installations
    WHERE app_id = 'future-mobility-simulator' AND instance_id = 'museum-x';"
 
@@ -53,12 +55,29 @@ npx wrangler d1 execute nachbarin --remote --command \
 
 The `SELECT ... FROM installations WHERE` form means you name the installation the way you think of it and never look up its surrogate id; if the pair does not exist, zero rows are inserted rather than the wrong ones.
 
-A **read key** — the bulk-download identity — has no installation:
+A **read key** is minted exactly the same way, with `'read'` in place of `'write'`:
 
 ```sh
 npx wrangler d1 execute nachbarin --remote --command \
-  "INSERT INTO api_keys (key_hash, kind, label) VALUES ('$HASH', 'read', 'Operator download');"
+  "INSERT INTO api_keys (key_hash, kind, installation_pk, label)
+   SELECT '$HASH', 'read', id, 'Operator download, north hall'
+   FROM installations
+   WHERE app_id = 'future-mobility-simulator' AND instance_id = 'museum-x';"
 ```
+
+Every key grants exactly one installation, whatever its kind, and `installation_pk` is `NOT NULL` — so an omitted installation is an error rather than a key with more reach than you meant. A read key downloads that one installation's records: `GET /v1/records` takes no `?app=` or `?instance=`, because the key already settles the question.
+
+### Exporting across installations
+
+There is deliberately no key that spans installations. A cross-installation export is a query run by hand, not a credential:
+
+```sh
+npx wrangler d1 execute nachbarin --remote --json --command "SELECT ...;" > export.json
+```
+
+(Records are not stored yet — there is no records table to select from, and the read endpoint answers `501`. Identity is real.)
+
+This is rare work that belongs next to the rest of the hand-typed SQL on this page. A token that spanned installations would be a standing one: it lives on someone's laptop, in a CI variable, in a chat log, and reads every museum's data for as long as it exists. Running the query needs database access at the moment you need it, and leaves nothing behind.
 
 ### Revoking a key
 
