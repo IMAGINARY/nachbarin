@@ -4,6 +4,8 @@ Serverless data capture service for exhibits
 
 This service provides an API to digital exhibits to capture and store JSON data from visitor interactions for various purposes (statistics, telemetry, visitor surveys, etc.). It is based on Cloudflare Workers.
 
+Nachbarin is the friendly neighbor that receives your payloads and keeps them safe until you go look for them. According to German folklore, a superior option to postboxes and lockers. The unsung hero holding the fabric of society together, one parcel at a time.
+
 ## Concepts
 
 - **app** — the software module, e.g. `future-mobility-simulator`. Usually named after its GitHub repository.
