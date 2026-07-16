@@ -1,4 +1,5 @@
 # nachbarin
+
 Serverless data capture service for exhibits
 
 This service provides an API to digital exhibits to capture and store JSON data from visitor interactions for various purposes (statistics, telemetry, visitor surveys, etc.). It is based on Cloudflare Workers.
@@ -9,20 +10,20 @@ This service provides an API to digital exhibits to capture and store JSON data 
 - **instance** — where it runs: a museum, or one copy of a travelling exhibition. Defaults to `default`.
 - **installation** — the `(app, instance)` pair. A record belongs to an installation, and an API key grants exactly one.
 
-An *exhibit* is the whole thing in the museum — furniture, hardware, wall texts, and the app. Only the app talks to this API, which is why nothing here is keyed by "exhibit".
+An _exhibit_ is the whole thing in the museum — furniture, hardware, wall texts, and the app. Only the app talks to this API, which is why nothing here is keyed by "exhibit".
 
 ## What gets stored
 
 A record is its `app_data` — an opaque JSON payload the app defines and this service never interprets — plus the least identifying context needed to make it analysable:
 
-| | |
-|---|---|
-| `id` | Server-assigned, monotonic. Doubles as the download cursor. |
-| `installation` | Resolved from the API key, never from the request body. |
-| `client_id` | The app's UUID for the record. Deduplicates retries. |
-| `created_date` | The **date** the app says it made the record, exhibit-local. |
-| `received_date` | The **date** this service took the batch, UTC. |
-| `engine_version`, `content_version` | What produced it. |
+|                                     |                                                              |
+| ----------------------------------- | ------------------------------------------------------------ |
+| `id`                                | Server-assigned, monotonic. Doubles as the download cursor.  |
+| `installation`                      | Resolved from the API key, never from the request body.      |
+| `client_id`                         | The app's UUID for the record. Deduplicates retries.         |
+| `created_date`                      | The **date** the app says it made the record, exhibit-local. |
+| `received_date`                     | The **date** this service took the batch, UTC.               |
+| `engine_version`, `content_version` | What produced it.                                            |
 
 **Only dates, deliberately.** Apps submit `created_at` as a full RFC 3339 timestamp, and the service keeps only its date. `app_data` is coarse by construction — it records choices, not people — but a precise timestamp is not coarse at all: set beside camera footage or a ticket scan, "this visitor was here at 14:03:22" and "this record was made at 14:03:22" are the same sentence. A date supports every segmentation anyone actually asks for ("how did July compare to June?") without making that inference cheap. The full timestamps live in a separate operator-side metadata table, with different access and its own retention.
 

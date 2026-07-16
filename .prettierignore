@@ -1,0 +1,9 @@
+# Generated files — the generator owns the formatting, not Prettier.
+#
+# `wrangler types` already formats its output with this repo's .prettierrc (it picks up the
+# prettier devDependency), but emits the `Env` header with tabs. Letting Prettier rewrite those
+# lines makes every `npm run cf-typegen` produce a spurious diff that the next save flips back.
+worker-configuration.d.ts
+
+# npm owns the formatting of the lockfile.
+package-lock.json

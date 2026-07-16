@@ -74,10 +74,7 @@ describe('identity comes from the key', () => {
 
   it('refuses a body that tries to declare its own identity', async () => {
     const deps = makeDeps();
-    const response = await handleRequest(
-      postRequest({ records: [validRecord({ instance_id: 'instance-b' })] }, KEY_A),
-      deps,
-    );
+    const response = await handleRequest(postRequest({ records: [validRecord({ instance_id: 'instance-b' })] }, KEY_A), deps);
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ results: [{ status: 'rejected', error: 'invalid_field' }] });

@@ -61,11 +61,7 @@ describe('write outcomes', () => {
     );
 
     expect(response.status).toBe(200);
-    expect((await response.json<WriteResponse>()).results.map((r) => r.status)).toEqual([
-      'created',
-      'duplicate',
-      'rejected',
-    ]);
+    expect((await response.json<WriteResponse>()).results.map((r) => r.status)).toEqual(['created', 'duplicate', 'rejected']);
   });
 
   it('accepts an empty batch', async () => {

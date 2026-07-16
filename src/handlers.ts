@@ -184,10 +184,7 @@ export async function handleGetRecords(url: URL, principal: ReadPrincipal, deps:
  * This caps the response, not peak memory — the rows are already materialized by the time we get
  * here. Pushing the budget down into the query is the real fix and belongs with the adapter.
  */
-function trimToByteBudget(
-  records: readonly StoredRecord[],
-  hasMore: boolean,
-): { records: readonly StoredRecord[]; hasMore: boolean } {
+function trimToByteBudget(records: readonly StoredRecord[], hasMore: boolean): { records: readonly StoredRecord[]; hasMore: boolean } {
   let total = 0;
 
   for (let i = 0; i < records.length; i++) {

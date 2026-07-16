@@ -33,12 +33,7 @@ export function jsonResponse(body: unknown, status = 200, headers: Record<string
   });
 }
 
-export function errorResponse(
-  status: number,
-  error: ErrorCode,
-  message?: string,
-  headers: Record<string, string> = {},
-): Response {
+export function errorResponse(status: number, error: ErrorCode, message?: string, headers: Record<string, string> = {}): Response {
   return jsonResponse(message === undefined ? { error } : { error, message }, status, headers);
 }
 
@@ -50,8 +45,7 @@ export function isJsonContentType(header: string | null): boolean {
 }
 
 export type BodyReadResult =
-  | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly reason: 'too_large' | 'invalid_utf8' };
+  { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: 'too_large' | 'invalid_utf8' };
 
 /**
  * Reads a request body as text, refusing to buffer more than `maxBytes`.

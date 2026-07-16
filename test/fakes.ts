@@ -44,10 +44,7 @@ export class FakeRecordStore implements RecordStore {
       // instance_id alone: that is `default` for most apps, so two apps at the same instance would
       // collide and the second one's records would be dropped as acknowledged duplicates.
       const exists = this.rows.some(
-        (row) =>
-          row.app_id === principal.appId &&
-          row.instance_id === principal.instanceId &&
-          row.client_id === record.clientId,
+        (row) => row.app_id === principal.appId && row.instance_id === principal.instanceId && row.client_id === record.clientId,
       );
       if (exists) return 'duplicate' as const;
 

@@ -3,49 +3,47 @@
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "nachbarin",
-	"main": "src/index.ts",
-	"compatibility_date": "2026-07-09",
-	"observability": {
-		"enabled": true
-	},
-	"upload_source_maps": true,
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	/**
-	 * D1. Schema changes go in `migrations/` and are applied with
-	 * `wrangler d1 migrations apply nachbarin --local` (and `--remote` to publish them).
-	 * Run `npm run cf-typegen` after touching any binding so `Env` stays in sync.
-	 */
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "nachbarin",
-			"database_id": "528a4c7f-d66c-4c05-8af2-9ceb79fcade2"
-		}
-	]
-	/**
-	 * Smart Placement
-	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-	 */
-	// "placement": {  "mode": "smart" }
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
-	/**
-	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
-	 */
-	// "assets": {  "directory": "./public/",  "binding": "ASSETS" }
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nachbarin",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-09",
+  "observability": {
+    "enabled": true,
+  },
+  "upload_source_maps": true,
+  "compatibility_flags": ["nodejs_compat"],
+  /**
+   * D1. Schema changes go in `migrations/` and are applied with
+   * `wrangler d1 migrations apply nachbarin --local` (and `--remote` to publish them).
+   * Run `npm run cf-typegen` after touching any binding so `Env` stays in sync.
+   */
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nachbarin",
+      "database_id": "528a4c7f-d66c-4c05-8af2-9ceb79fcade2",
+    },
+  ],
+  /**
+   * Smart Placement
+   * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+   */
+  // "placement": {  "mode": "smart" }
+  /**
+   * Environment Variables
+   * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+   * Note: Use secrets to store sensitive data.
+   * https://developers.cloudflare.com/workers/configuration/secrets/
+   */
+  // "vars": {  "MY_VARIABLE": "production_value" }
+  /**
+   * Static Assets
+   * https://developers.cloudflare.com/workers/static-assets/binding/
+   */
+  // "assets": {  "directory": "./public/",  "binding": "ASSETS" }
+  /**
+   * Service Bindings (communicate between multiple Workers)
+   * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
+   */
+  // "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
 }

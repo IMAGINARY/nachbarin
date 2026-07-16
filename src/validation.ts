@@ -218,10 +218,7 @@ export function validateRecord(value: unknown): Result<NewRecord, Failure> {
 
   const appDataBytes = encoder.encode(appDataJson).byteLength;
   if (appDataBytes > MAX_APP_DATA_BYTES) {
-    return fail(
-      'payload_too_large',
-      `app_data is ${String(appDataBytes)} bytes; the limit is ${String(MAX_APP_DATA_BYTES)}`,
-    );
+    return fail('payload_too_large', `app_data is ${String(appDataBytes)} bytes; the limit is ${String(MAX_APP_DATA_BYTES)}`);
   }
 
   // The one concession to inspecting app_data, and it is a storage-portability constraint rather
@@ -260,10 +257,7 @@ export function validateWriteEnvelope(body: unknown): Result<unknown[], Failure>
   // Checked before any per-record work: validating an enormous batch only to reject the whole
   // thing anyway would be a cheap way to burn our CPU.
   if (records.length > MAX_RECORDS_PER_BATCH) {
-    return fail(
-      'batch_too_large',
-      `${String(records.length)} records; the maximum is ${String(MAX_RECORDS_PER_BATCH)}`,
-    );
+    return fail('batch_too_large', `${String(records.length)} records; the maximum is ${String(MAX_RECORDS_PER_BATCH)}`);
   }
 
   return ok(records);

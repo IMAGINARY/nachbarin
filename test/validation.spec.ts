@@ -91,9 +91,7 @@ describe('client_id', () => {
   });
 
   it('normalizes to lowercase, so dedupe does not depend on the backend collation', () => {
-    expect(expectOk(withId('3F8A1B2C-0000-4000-8000-00000000000A')).clientId).toBe(
-      '3f8a1b2c-0000-4000-8000-00000000000a',
-    );
+    expect(expectOk(withId('3F8A1B2C-0000-4000-8000-00000000000A')).clientId).toBe('3f8a1b2c-0000-4000-8000-00000000000a');
   });
 
   // The nil UUID is what an uninitialized variable looks like. Since duplicate counts as success,
@@ -165,9 +163,7 @@ describe('version fields', () => {
   // Optional so an app with no notion of content version need not invent a placeholder.
   it('defaults an absent content_version to null rather than an empty string', () => {
     expect(expectOk(validateRecord(validRecord())).contentVersion).toBeNull();
-    expect(expectOk(validateRecord(validRecord({ content_version: 'sha256:ab12' }))).contentVersion).toBe(
-      'sha256:ab12',
-    );
+    expect(expectOk(validateRecord(validRecord({ content_version: 'sha256:ab12' }))).contentVersion).toBe('sha256:ab12');
   });
 
   it('rejects an explicitly empty or over-long content_version', () => {
