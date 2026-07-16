@@ -6,13 +6,13 @@
  */
 
 /**
- * One installation — an app running at an instance. Write-only: installations can never read.
+ * One installation — an app running at an instance. Write-only: it can never read.
  *
  * `app` names the software module; `instance` names where it runs (a museum, or one copy of a
  * travelling exhibition). Neither identifies a record on its own: the pair does.
  */
-export interface InstallationPrincipal {
-  readonly kind: 'installation';
+export interface WritePrincipal {
+  readonly kind: 'write';
   readonly appId: string;
   readonly instanceId: string;
 }
@@ -22,7 +22,7 @@ export interface ReadPrincipal {
   readonly kind: 'read';
 }
 
-export type Principal = InstallationPrincipal | ReadPrincipal;
+export type Principal = WritePrincipal | ReadPrincipal;
 
 /**
  * Extracts the token from an `Authorization: Bearer <key>` header.

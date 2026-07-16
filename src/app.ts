@@ -67,7 +67,7 @@ async function route(request: Request, deps: Deps): Promise<Response> {
   if (principal === null) return unauthorized();
 
   if (request.method === 'POST') {
-    if (principal.kind !== 'installation') {
+    if (principal.kind !== 'write') {
       return errorResponse(403, 'forbidden', 'this key may not write records');
     }
     return handlePostRecords(request, principal, deps);

@@ -5,7 +5,7 @@
  * without a database and without the Worker entry point.
  */
 
-import type { InstallationPrincipal } from './auth';
+import type { WritePrincipal } from './auth';
 import { MAX_REQUEST_BODY_BYTES, MAX_RESPONSE_BYTES } from './config';
 import { errorResponse, isJsonContentType, jsonResponse, readCappedText } from './http';
 import type { Deps, InsertOutcome, NewRecord, StoredRecord } from './storage';
@@ -30,7 +30,7 @@ const encoder = new TextEncoder();
  *
  * ```
  * POST /v1/records
- * Authorization: Bearer <installation-key>
+ * Authorization: Bearer <write-key>
  * Content-Type: application/json
  *
  * { "records": [ {
@@ -67,11 +67,7 @@ const encoder = new TextEncoder();
  * No app or instance field is read from the body. Identity comes from the API key alone, so a
  * client cannot misreport who it is.
  */
-export async function handlePostRecords(
-  request: Request,
-  principal: InstallationPrincipal,
-  deps: Deps,
-): Promise<Response> {
+export async function handlePostRecords(request: Request, principal: WritePrincipal, deps: Deps): Promise<Response> {
   if (!isJsonContentType(request.headers.get('content-type'))) {
     return errorResponse(415, 'unsupported_media_type', 'Content-Type must be application/json');
   }

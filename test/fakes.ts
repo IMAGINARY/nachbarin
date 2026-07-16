@@ -8,7 +8,7 @@
  * values, so the handler tests exercise genuine behaviour while the database is still unbuilt.
  */
 
-import type { InstallationPrincipal, Principal } from '../src/auth';
+import type { Principal, WritePrincipal } from '../src/auth';
 import type { Deps, InsertOutcome, KeyStore, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from '../src/storage';
 
 export class FakeKeyStore implements KeyStore {
@@ -34,11 +34,7 @@ export class FakeRecordStore implements RecordStore {
 
   private nextId = 1;
 
-  insert(
-    principal: InstallationPrincipal,
-    receivedAt: Date,
-    records: readonly NewRecord[],
-  ): Promise<InsertOutcome[]> {
+  insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[]): Promise<InsertOutcome[]> {
     this.insertCalls++;
     if (this.failWith !== null) return Promise.reject(this.failWith);
 
@@ -92,15 +88,15 @@ export class FakeRecordStore implements RecordStore {
   }
 }
 
-export const INSTALLATION_A: InstallationPrincipal = {
-  kind: 'installation',
+export const WRITE_A: WritePrincipal = {
+  kind: 'write',
   appId: 'app-1',
   instanceId: 'instance-a',
 };
 
 /** Same app as A, different instance. */
-export const INSTALLATION_B: InstallationPrincipal = {
-  kind: 'installation',
+export const WRITE_B: WritePrincipal = {
+  kind: 'write',
   appId: 'app-1',
   instanceId: 'instance-b',
 };
@@ -110,15 +106,15 @@ export const INSTALLATION_B: InstallationPrincipal = {
  * `instance_id`-only dedupe gets wrong. Instances are shared in practice: two apps in the same
  * museum both sit at `instance-a`, and by default both would sit at `default`.
  */
-export const INSTALLATION_C: InstallationPrincipal = {
-  kind: 'installation',
+export const WRITE_C: WritePrincipal = {
+  kind: 'write',
   appId: 'app-2',
   instanceId: 'instance-a',
 };
 
-export const KEY_A = 'key-installation-a';
-export const KEY_B = 'key-installation-b';
-export const KEY_C = 'key-installation-c';
+export const KEY_A = 'key-write-a';
+export const KEY_B = 'key-write-b';
+export const KEY_C = 'key-write-c';
 export const KEY_READ = 'key-read';
 
 export const FIXED_NOW = new Date('2026-07-15T12:00:00.000Z');
@@ -128,12 +124,12 @@ export interface TestDeps extends Deps {
   readonly recordStore: FakeRecordStore;
 }
 
-/** Deps pre-wired with three installation keys and one read key. */
+/** Deps pre-wired with three write keys and one read key. */
 export function makeDeps(): TestDeps {
   const keyStore = new FakeKeyStore()
-    .set(KEY_A, INSTALLATION_A)
-    .set(KEY_B, INSTALLATION_B)
-    .set(KEY_C, INSTALLATION_C)
+    .set(KEY_A, WRITE_A)
+    .set(KEY_B, WRITE_B)
+    .set(KEY_C, WRITE_C)
     .set(KEY_READ, { kind: 'read' });
 
   return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW };

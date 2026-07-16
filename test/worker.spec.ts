@@ -10,7 +10,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import worker from '../src/index';
-import { KEY_INSTALLATION, KEY_READER, KEY_REVOKED, KEY_UNKNOWN, seedKeys } from './seed';
+import { KEY_WRITE, KEY_READER, KEY_REVOKED, KEY_UNKNOWN, seedKeys } from './seed';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -87,9 +87,9 @@ describe('authentication against real D1', () => {
     expect((await post(KEY_READER, { records: [] })).status).toBe(403);
   });
 
-  it('403s an installation key that tries to read', async () => {
+  it('403s a write key that tries to read', async () => {
     const response = await SELF.fetch('https://example.com/v1/records', {
-      headers: { authorization: `Bearer ${KEY_INSTALLATION}` },
+      headers: { authorization: `Bearer ${KEY_WRITE}` },
     });
     expect(response.status).toBe(403);
   });
@@ -97,7 +97,7 @@ describe('authentication against real D1', () => {
   // An empty batch is valid and never reaches RecordStore (handlers.ts guards on accepted.length),
   // so this 200 is what proves the key resolved: an unresolved key could not have got here.
   it('200s a valid key sending an empty batch', async () => {
-    const response = await post(KEY_INSTALLATION, { records: [] });
+    const response = await post(KEY_WRITE, { records: [] });
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ results: [] });
@@ -108,7 +108,7 @@ describe('storage is still stubbed', () => {
   // The batch must be non-empty: an empty one short-circuits before RecordStore and would return
   // 200, making this assertion prove nothing. This is the test that flips when records land.
   it('501s a write that reaches storage', async () => {
-    const response = await post(KEY_INSTALLATION, { records: [VALID_RECORD] });
+    const response = await post(KEY_WRITE, { records: [VALID_RECORD] });
 
     expect(response.status).toBe(501);
     expect(await response.json()).toMatchObject({ error: 'not_implemented' });

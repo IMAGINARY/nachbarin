@@ -13,7 +13,7 @@
  * validation path against a real fake `KeyStore` while `RecordStore` is still a stub.
  */
 
-import type { InstallationPrincipal, Principal } from './auth';
+import type { Principal, WritePrincipal } from './auth';
 
 export interface KeyStore {
   /**
@@ -112,11 +112,7 @@ export interface RecordStore {
    * reporting a transient failure as an outcome would silently discard data. Throwing surfaces as
    * 500/503 and the client retries the whole batch, which `client_id` makes safe.
    */
-  insert(
-    principal: InstallationPrincipal,
-    receivedAt: Date,
-    records: readonly NewRecord[],
-  ): Promise<InsertOutcome[]>;
+  insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[]): Promise<InsertOutcome[]>;
 
   list(query: ListQuery): Promise<ListPage>;
 }

@@ -9,17 +9,16 @@
 import type { Principal } from './auth';
 import type { KeyStore } from './storage';
 
-/** The one row {@link D1KeyStore.resolve} reads. `app_id`/`instance_id` are null for a read key. */
+/** The one row {@link D1KeyStore.resolve} reads. */
 interface KeyRow {
   readonly kind: string;
-  readonly app_id: string | null;
-  readonly instance_id: string | null;
+  readonly app_id: string;
+  readonly instance_id: string;
 }
 
 /**
- * The `LEFT` is load-bearing. A read key has no `installation_pk`, so an inner join would return
- * zero rows for it — every bulk download would 401, and no test that only exercises installation
- * keys would ever notice.
+ * A plain inner join: `installation_pk` is NOT NULL for every key, of either kind, so a row that
+ * authenticates always has an installation to join to.
  *
  * `revoked_at IS NULL` is the other half of soft deletion. Forgetting it would silently resurrect
  * every revoked key ever issued.
@@ -27,7 +26,7 @@ interface KeyRow {
 const RESOLVE_SQL = `
   SELECT k.kind, i.app_id, i.instance_id
   FROM api_keys k
-  LEFT JOIN installations i ON i.id = k.installation_pk
+  JOIN installations i ON i.id = k.installation_pk
   WHERE k.key_hash = ?1 AND k.revoked_at IS NULL
 `;
 
@@ -71,15 +70,14 @@ export class D1KeyStore implements KeyStore {
 
     if (row.kind === 'read') return { kind: 'read' };
 
-    if (row.kind === 'installation' && row.app_id !== null && row.instance_id !== null) {
-      return { kind: 'installation', appId: row.app_id, instanceId: row.instance_id };
+    if (row.kind === 'write') {
+      return { kind: 'write', appId: row.app_id, instanceId: row.instance_id };
     }
 
-    // Unreachable while the CHECK constraints hold — which is the point: the schema and the type
-    // system enforce one invariant from both ends. TypeScript makes us narrow the nullable columns
-    // anyway, so this costs nothing. Fail closed rather than throw: a row we cannot map is a row we
-    // cannot authorize. Logged, because unlike every other 401 this one means the database disagrees
-    // with `Principal`.
+    // Unreachable while the CHECK on `kind` holds — which is the point: the schema and the type
+    // system enforce one invariant from both ends. Fail closed rather than throw: a row we cannot
+    // map is a row we cannot authorize. Logged, because unlike every other 401 this one means the
+    // database disagrees with `Principal`.
     console.error('api_keys row does not map to a Principal', { kind: row.kind });
     return null;
   }

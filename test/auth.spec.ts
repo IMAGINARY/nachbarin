@@ -43,8 +43,8 @@ describe('authentication', () => {
 });
 
 describe('authorization', () => {
-  // The whole point of separate key kinds: installations can never read.
-  it('403s an installation key on the read endpoint', async () => {
+  // The whole point of separate key kinds: a write key can never read.
+  it('403s a write key on the read endpoint', async () => {
     const response = await handleRequest(getRequest('', KEY_A), makeDeps());
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: 'forbidden' });
