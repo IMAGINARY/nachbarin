@@ -70,8 +70,8 @@ describe('created_at', () => {
     expect(expectFail(validateRecord(rest)).message).toContain('created_at is required');
   });
 
-  // created_at and received_at are stored side by side precisely so skew stays visible. Rejecting
-  // it at the door would destroy the evidence.
+  // created_date and received_date are stored side by side precisely so skew stays visible.
+  // Rejecting it at the door would destroy the evidence.
   it('accepts implausible clocks, because skew is meant to be detectable rather than refused', () => {
     expect(expectOk(withDate('1970-01-01T00:00:00Z')).createdAt).toBe('1970-01-01T00:00:00Z');
     expect(expectOk(withDate('2099-12-31T23:59:59Z')).createdAt).toBe('2099-12-31T23:59:59Z');

@@ -1,9 +1,8 @@
 /**
  * D1 adapter for {@link KeyStore}.
  *
- * Implements one of the two seams in `storage.ts`. `RecordStore` is still the not-implemented stub,
- * so a request bearing a valid key now gets *past* authentication and 501s at the point it actually
- * needs records — which is what proves the key tables work end to end.
+ * One of the two seams in `storage.ts`; `d1-record-store.ts` is the other. This one sits on the
+ * hotter path — every request passes through it before its body is even read.
  */
 
 import type { Principal } from './auth';

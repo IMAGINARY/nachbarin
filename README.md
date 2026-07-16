@@ -11,6 +11,29 @@ This service provides an API to digital exhibits to capture and store JSON data 
 
 An *exhibit* is the whole thing in the museum — furniture, hardware, wall texts, and the app. Only the app talks to this API, which is why nothing here is keyed by "exhibit".
 
+## What gets stored
+
+A record is its `app_data` — an opaque JSON payload the app defines and this service never interprets — plus the least identifying context needed to make it analysable:
+
+| | |
+|---|---|
+| `id` | Server-assigned, monotonic. Doubles as the download cursor. |
+| `installation` | Resolved from the API key, never from the request body. |
+| `client_id` | The app's UUID for the record. Deduplicates retries. |
+| `created_date` | The **date** the app says it made the record, exhibit-local. |
+| `received_date` | The **date** this service took the batch, UTC. |
+| `engine_version`, `content_version` | What produced it. |
+
+**Only dates, deliberately.** Apps submit `created_at` as a full RFC 3339 timestamp, and the service keeps only its date. `app_data` is coarse by construction — it records choices, not people — but a precise timestamp is not coarse at all: set beside camera footage or a ticket scan, "this visitor was here at 14:03:22" and "this record was made at 14:03:22" are the same sentence. A date supports every segmentation anyone actually asks for ("how did July compare to June?") without making that inference cheap. The full timestamps live in a separate operator-side metadata table, with different access and its own retention.
+
+This is a real limit, not a guarantee of anonymity: `id` is monotonic, so the order of one installation's records is visible, and someone who knows the opening hours can place a record within its day. Storing dates raises the cost of tying a record to a person; it does not make it impossible.
+
+**`created_date` is local because `created_at` carries its offset.** No timezone is configured anywhere. An app that reports `Z` instead of its real offset gets the UTC date, which can land a day early for the few hours around local midnight — museums are shut then, and an operator who genuinely needs those hours can extract them with SQL against the metadata table.
+
+**`received_date` is how you spot a broken clock.** It comes from the server, so it cannot be wrong; `created_date` comes from the exhibit, so it can. An exhibit whose RTC died reports 1970 forever, and the pair makes that visible long after the metadata table's retention window has closed. The two are in different frames (local vs UTC) and may differ by one around midnight — treat them as a smell test, never an exact difference.
+
+**One write key, one active installation.** Records are deduplicated on `(installation, client_id)`. Installing the same write key in two live installations puts two apps' UUIDs in one namespace; a collision is vanishingly unlikely with UUIDs, but a collision would be reported as `duplicate` — which this protocol defines as success — and the client would drop a record that was never stored. Mint a key per installation.
+
 ## Operations
 
 Identity lives in D1, in two hand-maintained tables: `installations` and `api_keys`. There is no admin UI, and deliberately no admin endpoint — this is rare, irreversible work that should be typed on purpose.
@@ -72,10 +95,15 @@ Every key grants exactly one installation, whatever its kind, and `installation_
 There is deliberately no key that spans installations. A cross-installation export is a query run by hand, not a credential:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --json --command "SELECT ...;" > export.json
+npx wrangler d1 execute nachbarin --remote --json --command \
+  "SELECT i.app_id, i.instance_id, r.created_date, r.engine_version, r.app_data
+   FROM records r
+   JOIN installations i ON i.id = r.installation_pk
+   WHERE r.created_date BETWEEN '2026-07-01' AND '2026-07-31'
+   ORDER BY r.id;" > export.json
 ```
 
-(Records are not stored yet — there is no records table to select from, and the read endpoint answers `501`. Identity is real.)
+`app_data` is JSON in a text column, so SQLite's JSON functions work on it directly — `json_extract(r.app_data, '$.nodes')` and friends. A `CHECK (json_valid(app_data))` on the table means an export can never die partway through on a row that will not parse.
 
 This is rare work that belongs next to the rest of the hand-typed SQL on this page. A token that spanned installations would be a standing one: it lives on someone's laptop, in a CI variable, in a chat log, and reads every museum's data for as long as it exists. Running the query needs database access at the moment you need it, and leaves nothing behind.
 

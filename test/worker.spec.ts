@@ -1,18 +1,24 @@
 /**
  * Exercises the real `src/index.ts` wiring through the Workers runtime.
  *
- * Unlike the handler specs, these inject nothing: the key store is the real `D1KeyStore` reading the
- * real (local) database, so authentication here is end to end. `RecordStore` is still the stub, so
- * the two 501s below are what a fully-authenticated request looks like today — they are the proof
- * that the key tables work, and they flip to real assertions when records land.
+ * Unlike the handler specs, these inject nothing: both stores are the real D1 adapters reading the
+ * real (local) database. Authentication, storage and scope are all end to end here, which is what
+ * the fakes cannot prove.
  */
 
 import { env, SELF } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import worker from '../src/index';
-import { KEY_WRITE, KEY_READER, KEY_REVOKED, KEY_UNKNOWN, seedKeys } from './seed';
+import type { StoredRecord } from '../src/storage';
+import { KEY_WRITE, KEY_READER, KEY_READER_SAME, KEY_REVOKED, KEY_UNKNOWN, SEEDED_APP, SEEDED_INSTANCE, seedKeys } from './seed';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+
+interface ReadResponse {
+  records: StoredRecord[];
+  next_after_id: number;
+  has_more: boolean;
+}
 
 const VALID_RECORD = {
   client_id: '3f8a0000-0000-4000-8000-000000000001',
@@ -30,6 +36,9 @@ const post = (key: string | null, body: unknown) =>
     },
     body: JSON.stringify(body),
   });
+
+const read = (key: string, query = '') =>
+  SELF.fetch(`https://example.com/v1/records${query}`, { headers: { authorization: `Bearer ${key}` } });
 
 beforeAll(seedKeys);
 
@@ -88,10 +97,7 @@ describe('authentication against real D1', () => {
   });
 
   it('403s a write key that tries to read', async () => {
-    const response = await SELF.fetch('https://example.com/v1/records', {
-      headers: { authorization: `Bearer ${KEY_WRITE}` },
-    });
-    expect(response.status).toBe(403);
+    expect((await read(KEY_WRITE)).status).toBe(403);
   });
 
   // An empty batch is valid and never reaches RecordStore (handlers.ts guards on accepted.length),
@@ -104,20 +110,49 @@ describe('authentication against real D1', () => {
   });
 });
 
-describe('storage is still stubbed', () => {
-  // The batch must be non-empty: an empty one short-circuits before RecordStore and would return
-  // 200, making this assertion prove nothing. This is the test that flips when records land.
-  it('501s a write that reaches storage', async () => {
-    const response = await post(KEY_WRITE, { records: [VALID_RECORD] });
+describe('storage against real D1', () => {
+  // The whole protocol in one test, through the real Worker and the real database: a batch is
+  // written, comes back `created`, and is then downloaded by a reader on that installation.
+  it('round-trips a batch from write key to read key', async () => {
+    expect((await post(KEY_WRITE, { records: [VALID_RECORD] })).status).toBe(200);
 
-    expect(response.status).toBe(501);
-    expect(await response.json()).toMatchObject({ error: 'not_implemented' });
+    const response = await read(KEY_READER_SAME);
+    const body = await response.json<ReadResponse>();
+
+    expect(response.status).toBe(200);
+    expect(body.has_more).toBe(false);
+    expect(body.records).toHaveLength(1);
+    expect(body.records[0]).toMatchObject({
+      app_id: SEEDED_APP,
+      instance_id: SEEDED_INSTANCE,
+      client_id: VALID_RECORD.client_id,
+      created_date: '2026-07-15',
+      app_data: { nodes: [['q1', 3]] },
+    });
+    expect(body.next_after_id).toBe(body.records[0].id);
   });
 
-  it('501s a read that reaches storage', async () => {
-    const response = await SELF.fetch('https://example.com/v1/records', {
-      headers: { authorization: `Bearer ${KEY_READER}` },
-    });
-    expect(response.status).toBe(501);
+  // Retrying a batch is the normal case, not the exceptional one: a client that never heard our
+  // response sends it again. It must be told we have it, and must not store it twice.
+  it('reports a resent batch as duplicate without storing it twice', async () => {
+    await post(KEY_WRITE, { records: [VALID_RECORD] });
+    const again = await post(KEY_WRITE, { records: [VALID_RECORD] });
+
+    expect(await again.json()).toEqual({ results: [{ client_id: VALID_RECORD.client_id, status: 'duplicate' }] });
+    expect((await (await read(KEY_READER_SAME)).json<ReadResponse>()).records).toHaveLength(1);
+  });
+
+  // The scope, end to end. KEY_READER is a valid read key on the *other* installation, so it must
+  // see nothing of what KEY_WRITE just deposited -- there is no parameter it could add to change
+  // that, which is the point of scope being authorization rather than a filter.
+  it('shows one installation nothing of another', async () => {
+    await post(KEY_WRITE, { records: [VALID_RECORD] });
+
+    const body = await (await read(KEY_READER)).json<ReadResponse>();
+
+    expect(body.records).toEqual([]);
+    expect(body.has_more).toBe(false);
+    // Echoes the cursor back rather than special-casing an empty page.
+    expect(body.next_after_id).toBe(0);
   });
 });

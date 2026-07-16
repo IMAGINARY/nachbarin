@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { handleRequest } from '../src/app';
 import { MAX_REQUEST_BODY_BYTES } from '../src/config';
 import { StorageUnavailableError } from '../src/storage';
-import { FIXED_NOW, KEY_A, KEY_B, KEY_C, makeDeps, postRequest, uuid, validRecord } from './fakes';
+import {
+  FIXED_RECEIVED_DATE,
+  KEY_A,
+  KEY_B,
+  KEY_C,
+  makeDeps,
+  postRequest,
+  SKEWED_CREATED_AT,
+  SKEWED_CREATED_DATE,
+  uuid,
+  validRecord,
+} from './fakes';
 
 interface WriteResponse {
   results: { client_id: string | null; status: string; error?: string; message?: string }[];
@@ -139,12 +150,26 @@ describe('dedupe scope', () => {
 });
 
 describe('stored values', () => {
-  it('stamps one received_at for the whole batch and keeps created_at verbatim', async () => {
+  it('stamps one received_date for the whole batch', async () => {
     const { deps } = await post({ records: [validRecord(), validRecord()] });
 
-    const stamps = new Set(deps.recordStore.rows.map((row) => row.received_at));
-    expect(stamps).toEqual(new Set([FIXED_NOW.toISOString()]));
-    expect(deps.recordStore.rows[0].created_at).toBe('2026-07-15T14:03:22+02:00');
+    const stamps = new Set(deps.recordStore.rows.map((row) => row.received_date));
+    expect(stamps).toEqual(new Set([FIXED_RECEIVED_DATE]));
+  });
+
+  it('stores the local date of created_at, and no time', async () => {
+    const { deps } = await post({ records: [validRecord({ created_at: '2026-07-15T14:03:22+02:00' })] });
+    expect(deps.recordStore.rows[0].created_date).toBe('2026-07-15');
+  });
+
+  // The clock-skew case the two dates exist for, and the one that tells them apart: with a healthy
+  // exhibit clock both fall on the same day, so an implementation that wrote the server's date into
+  // both -- or swapped them -- would pass every other assertion here.
+  it('keeps a wrong exhibit clock visible instead of correcting or dropping it', async () => {
+    const { deps } = await post({ records: [validRecord({ created_at: SKEWED_CREATED_AT })] });
+
+    expect(deps.recordStore.rows[0].created_date).toBe(SKEWED_CREATED_DATE);
+    expect(deps.recordStore.rows[0].received_date).toBe(FIXED_RECEIVED_DATE);
   });
 
   it('stores an absent content_version as null', async () => {

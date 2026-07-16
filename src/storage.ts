@@ -4,13 +4,12 @@
  * These are the seams the database adapters fill. Handlers depend only on the interfaces, so an
  * adapter drops in without touching request-handling logic, and tests substitute in-memory fakes.
  *
- * `KeyStore` is implemented — see `d1-key-store.ts`. `RecordStore` is not: it is still the stub
- * below, so a request that gets past authentication and validation answers 501.
+ * Both are implemented against D1 — see `d1-key-store.ts` and `d1-record-store.ts`.
  *
  * `KeyStore` and `RecordStore` are separate on purpose. Authentication must happen before the
  * request body is read, so key resolution sits on a different (and much hotter, much more
  * cacheable) path than record persistence. Splitting them also lets tests exercise every
- * validation path against a real fake `KeyStore` while `RecordStore` is still a stub.
+ * validation path against a fake `KeyStore` without standing up a database.
  */
 
 import type { Principal, ReadPrincipal, WritePrincipal } from './auth';
@@ -34,20 +33,30 @@ export interface KeyStore {
  * A record that has passed validation and is ready to persist.
  *
  * `app_data` is carried as serialized JSON text rather than a parsed value: it is opaque and must
- * never be re-interpreted past validation, and every SQL driver binds `jsonb` from a string
- * anyway. Serializing during validation (where the size limit is measured) rather than at insert
- * time makes the measured size and the stored bytes provably identical.
+ * never be re-interpreted past validation, and the column it lands in is text anyway. Serializing
+ * during validation (where the size limit is measured) rather than at insert time makes the measured
+ * size and the stored bytes provably identical.
  */
 export interface NewRecord {
   /** Canonical lowercase UUID. Unique within an installation; this is the idempotency key. */
   readonly clientId: string;
-  /** The client's RFC 3339 string, verbatim — offset preserved rather than normalized to UTC. */
+  /**
+   * The client's RFC 3339 string, verbatim — offset preserved rather than normalized to UTC.
+   *
+   * The records table coarsens this to a date (see `localDateOf`) and keeps no exact time. It is
+   * carried at full precision because the metadata table, which lands next, stores it as sent.
+   */
   readonly createdAt: string;
   readonly engineVersion: string;
   /** Null when the app has no meaningful notion of content version. Never an empty string. */
   readonly contentVersion: string | null;
-  /** Compact `JSON.stringify` output. Persist as `jsonb`; a JSON `null` here must become
-   *  `'null'::jsonb`, not SQL NULL. */
+  /**
+   * Compact `JSON.stringify` output.
+   *
+   * A JSON `null` is a legal `app_data` and must round-trip as JSON null, never as SQL NULL — the
+   * latter says "no payload", which this protocol cannot express. D1 is SQLite and has no `jsonb`;
+   * the column is `TEXT NOT NULL`, which is what makes the wrong one unspellable.
+   */
   readonly appDataJson: string;
 }
 
@@ -60,17 +69,34 @@ export interface NewRecord {
  */
 export type InsertOutcome = 'created' | 'duplicate';
 
-/** A persisted record. snake_case because this is also the read endpoint's wire shape. */
+/**
+ * A persisted record. snake_case because this is also the read endpoint's wire shape.
+ *
+ * Note what is not here: the exact times the client reported and the server observed. Records are
+ * stored to a *date* and no finer. `app_data` is coarse enough to be uninteresting on its own, but a
+ * precise timestamp is not — against any other timed source it identifies who made which choice, and
+ * a date is all anyone downloading this data segments by anyway. The full timestamps live in the
+ * metadata table, behind different privileges and a retention policy. See `migrations/0003_*.sql`.
+ */
 export interface StoredRecord {
   /** Monotonic. This is the incremental-download cursor. */
   readonly id: number;
   readonly app_id: string;
   readonly instance_id: string;
   readonly client_id: string;
-  /** Client-reported creation time. */
-  readonly created_at: string;
-  /** Server clock at ingestion. Stored alongside `created_at` so clock skew stays detectable. */
-  readonly received_at: string;
+  /**
+   * `YYYY-MM-DD`, in the exhibit's local frame — the date of the client's `created_at`, offset and
+   * all. Trustworthy only as far as the exhibit's clock is; compare against `received_date`.
+   */
+  readonly created_date: string;
+  /**
+   * `YYYY-MM-DD`, UTC: the date this Worker took the batch. Server-derived, so it cannot be wrong,
+   * but it is not an analytic field — a client may queue for days, so it is when we heard rather
+   * than when it happened. It is here so a broken exhibit clock stays detectable after the metadata
+   * table's retention window closes. The two dates are in different frames and may legitimately
+   * differ by one around midnight: a smell test, never an exact difference.
+   */
+  readonly received_date: string;
   readonly engine_version: string;
   readonly content_version: string | null;
   readonly app_data: unknown;
@@ -109,7 +135,9 @@ export interface RecordStore {
    * be dropped from its queue as acknowledged. The storage schema expresses the pair as a single
    * surrogate key, which makes `(installation, client_id)` unambiguous.
    *
-   * @param receivedAt a single server timestamp for the whole batch.
+   * @param receivedAt a single server timestamp for the whole batch. The records table coarsens it
+   *   to `received_date` and keeps no exact time; it is passed at full precision because the
+   *   metadata table will store it as observed.
    * @returns outcomes positionally aligned with `records` — same length, same order.
    *
    * Must **throw** on transient failure rather than reporting a per-record outcome. Clients treat
@@ -131,7 +159,13 @@ export interface RecordStore {
   list(principal: ReadPrincipal, query: ListQuery): Promise<ListPage>;
 }
 
-/** Thrown by the stubs below. Maps to 501. */
+/**
+ * An operation whose seam exists but whose adapter does not. Maps to 501.
+ *
+ * Nothing throws it today: both stores are implemented. It is kept, with its boundary mapping in
+ * `app.ts` and its documented response in the spec, because the metadata store is the next seam to
+ * land and will pass through exactly this state.
+ */
 export class NotImplementedError extends Error {
   constructor(operation: string) {
     super(`${operation} is not implemented yet`);
@@ -150,19 +184,10 @@ export class StorageUnavailableError extends Error {
   }
 }
 
-export const notImplementedRecordStore: RecordStore = {
-  insert() {
-    return Promise.reject(new NotImplementedError('RecordStore.insert'));
-  },
-  list() {
-    return Promise.reject(new NotImplementedError('RecordStore.list'));
-  },
-};
-
 /** Everything a request handler needs from the outside world. */
 export interface Deps {
   readonly keyStore: KeyStore;
   readonly recordStore: RecordStore;
-  /** Injected so `received_at` is assertable in tests. */
+  /** Injected so `received_date` is assertable in tests. */
   readonly now: () => Date;
 }

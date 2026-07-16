@@ -10,6 +10,7 @@
 
 import type { Principal, ReadPrincipal, WritePrincipal } from '../src/auth';
 import type { Deps, InsertOutcome, KeyStore, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from '../src/storage';
+import { localDateOf } from '../src/validation';
 
 export class FakeKeyStore implements KeyStore {
   private readonly keys = new Map<string, Principal>();
@@ -55,8 +56,10 @@ export class FakeRecordStore implements RecordStore {
         app_id: principal.appId,
         instance_id: principal.instanceId,
         client_id: record.clientId,
-        created_at: record.createdAt,
-        received_at: receivedAt.toISOString(),
+        // Both timestamps are coarsened to a date and the exact times discarded, exactly as the D1
+        // adapter does. `created_date` stays in the client's local frame; `received_date` is UTC.
+        created_date: localDateOf(record.createdAt),
+        received_date: receivedAt.toISOString().slice(0, 10),
         engine_version: record.engineVersion,
         content_version: record.contentVersion,
         app_data: JSON.parse(record.appDataJson) as unknown,
@@ -126,6 +129,21 @@ export const KEY_READ = 'key-read-a';
 export const KEY_READ_C = 'key-read-c';
 
 export const FIXED_NOW = new Date('2026-07-15T12:00:00.000Z');
+
+/** The date {@link FIXED_NOW} coarsens to — every record written through {@link makeDeps}. */
+export const FIXED_RECEIVED_DATE = '2026-07-15';
+
+/**
+ * A `created_at` from an exhibit whose clock is badly wrong — the dead-RTC-reporting-1970 case that
+ * `created_date`/`received_date` exist to keep visible.
+ *
+ * Worth having as a fixture because {@link validRecord}'s `created_at` and {@link FIXED_NOW} both
+ * fall on {@link FIXED_RECEIVED_DATE}: with only those, an implementation that swapped the two
+ * columns — or wrote the server's date into both — would pass every assertion. This is the value
+ * that tells them apart.
+ */
+export const SKEWED_CREATED_AT = '1970-01-01T04:00:00+01:00';
+export const SKEWED_CREATED_DATE = '1970-01-01';
 
 export interface TestDeps extends Deps {
   readonly keyStore: FakeKeyStore;

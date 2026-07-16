@@ -21,9 +21,19 @@ export const KEY_READER = 'test-read-key';
 export const KEY_REVOKED = 'test-revoked-key';
 export const KEY_UNKNOWN = 'test-unknown-key';
 
+/**
+ * A read key on the *same* installation as {@link KEY_WRITE}, which is what makes a write-then-read
+ * round trip expressible at all — {@link KEY_READER} is on the other installation by design.
+ *
+ * Keeping both read keys is the point: this one proves a reader can see what was written, and
+ * {@link KEY_READER} proves it sees nothing else.
+ */
+export const KEY_READER_SAME = 'test-read-key-museum-x';
+
 const HASH_WRITE = '04c0218b3c6929c6638fa052827cc353c3e1eb3a432020f686e083aae900d6c4';
 const HASH_READER = '1fe7a77d2fca400ab2b506da2b5c7a0bc9ab21853ba6ad65c049915ff64dfabb';
 const HASH_REVOKED = '53970244b433599bbd3e20d18a8f567a43c61db7447cd0a92e8b1f8a4b0a98f3';
+const HASH_READER_SAME = '5d01461eb12bd83cdae4076916509f5d56064e2a9ce2e180fd85a9b86d21d5cf';
 
 export const SEEDED_APP = 'future-mobility-simulator';
 export const SEEDED_INSTANCE = 'museum-x';
@@ -40,9 +50,9 @@ export const SEEDED_APP_OTHER = 'visitor-survey';
 export const SEEDED_INSTANCE_OTHER = 'museum-y';
 
 /**
- * Seeds two installations and three keys: a working write key and a revoked write key on the first,
- * a working read key on the second. Call from `beforeAll` — the pool copies suite-level storage into
- * each test's frame, and undoes only what the test itself writes.
+ * Seeds two installations and four keys: a write key, a revoked write key and a read key on the
+ * first, and a read key on the second. Call from `beforeAll` — the pool copies suite-level storage
+ * into each test's frame, and undoes only what the test itself writes.
  */
 export async function seedKeys(): Promise<void> {
   await env.DB.batch([
@@ -58,9 +68,10 @@ export async function seedKeys(): Promise<void> {
     ),
     env.DB.prepare(
       `INSERT INTO api_keys (key_hash, kind, installation_pk, label, revoked_at) VALUES
-         (?1, 'write', 1, 'write key',   NULL),
-         (?2, 'read',  2, 'read key',    NULL),
-         (?3, 'write', 1, 'revoked key', '2026-07-01T00:00:00.000Z')`,
-    ).bind(HASH_WRITE, HASH_READER, HASH_REVOKED),
+         (?1, 'write', 1, 'write key',        NULL),
+         (?2, 'read',  2, 'read key',         NULL),
+         (?3, 'write', 1, 'revoked key',      '2026-07-01T00:00:00.000Z'),
+         (?4, 'read',  1, 'read key, inst 1', NULL)`,
+    ).bind(HASH_WRITE, HASH_READER, HASH_REVOKED, HASH_READER_SAME),
   ]);
 }

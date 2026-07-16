@@ -43,9 +43,10 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
  * Any UUID version is accepted — clients using v7 for time-ordering are doing something sensible
  * and should not be blocked.
  *
- * Lowercasing matters because this is half of the dedupe key. Postgres `uuid` normalizes case for
- * us, but a SQLite/D1 `TEXT` column would not, so normalizing here keeps deduplication identical
- * across backends.
+ * Lowercasing matters because this is half of the dedupe key, and D1 stores it in a `TEXT` column
+ * compared with BINARY collation: an uppercase UUID is simply a different string, so the same record
+ * under two spellings would defeat `UNIQUE (installation_pk, client_id)` and store twice. Normalized
+ * here, and CHECKed again in `migrations/0003_*.sql` so the invariant holds from both ends.
  *
  * The nil UUID is rejected, and that rejection is load-bearing rather than pedantic. `client_id`
  * is the idempotency key: a client that emits the nil UUID for every record — the classic
@@ -90,8 +91,9 @@ function daysInMonth(year: number, month: number): number {
  * 14:00 local"), and converting here would discard it before storage ever gets a say.
  *
  * Out-of-range clocks are *not* rejected: a dead RTC reporting 1970 is accepted and stored. The
- * schema keeps `created_at` and `received_at` side by side precisely so that skew stays visible
- * rather than being silently dropped at the door.
+ * schema keeps a client-reported date and a server-observed one side by side (`created_date` and
+ * `received_date`) precisely so that skew stays visible rather than being silently dropped at the
+ * door. See {@link localDateOf}.
  */
 function validateCreatedAt(value: unknown): Result<string, Failure> {
   if (typeof value !== 'string') return fail('invalid_field', 'created_at must be a string');
@@ -120,6 +122,30 @@ function validateCreatedAt(value: unknown): Result<string, Failure> {
   }
 
   return ok(value);
+}
+
+/**
+ * The local date of a validated `created_at` — `'YYYY-MM-DD'`.
+ *
+ * This is what `records.created_date` stores, and the exact time is then discarded rather than
+ * persisted: a precise interaction timestamp is the field that could tie a visitor to their choices
+ * given any other timed source (camera footage, a ticket scan), and `app_data` is not sensitive
+ * enough to be worth pairing with one. The full timestamp goes to the metadata table instead, which
+ * is read by different people under a different retention policy.
+ *
+ * A slice, and not any kind of conversion. `createdAt` has been through {@link validateCreatedAt},
+ * so it is RFC 3339 with an explicit offset and its first ten characters are a well-formed date —
+ * and because the offset is preserved rather than normalized to UTC, that date is *already* the
+ * exhibit's local one. No timezone table, no offset arithmetic, and in particular no `Date`: parsing
+ * to a `Date` would resolve the instant to UTC and hand back the wrong day for half the planet every
+ * evening, which is precisely the bug this repo refuses to reintroduce.
+ *
+ * The one soft spot is a client reporting `Z` instead of its true offset — then this is the UTC date,
+ * which can land a day early for the few hours around local midnight. Museums are shut then. If one
+ * is ever not, that is a documented limitation rather than a silent error.
+ */
+export function localDateOf(createdAt: string): string {
+  return createdAt.slice(0, 10);
 }
 
 function validateVersion(value: unknown, field: string): Result<string, Failure> {

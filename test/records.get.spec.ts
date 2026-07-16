@@ -3,7 +3,7 @@ import { handleRequest } from '../src/app';
 import { MAX_RESPONSE_BYTES } from '../src/config';
 import { StorageUnavailableError } from '../src/storage';
 import type { StoredRecord } from '../src/storage';
-import { getRequest, KEY_READ, KEY_READ_C, makeDeps, type TestDeps } from './fakes';
+import { FIXED_RECEIVED_DATE, getRequest, KEY_READ, KEY_READ_C, makeDeps, type TestDeps } from './fakes';
 
 interface ReadResponse {
   records: StoredRecord[];
@@ -17,8 +17,8 @@ function row(id: number, overrides: Partial<StoredRecord> = {}): StoredRecord {
     app_id: 'app-1',
     instance_id: 'instance-a',
     client_id: `3f8a0000-0000-4000-8000-${id.toString(16).padStart(12, '0')}`,
-    created_at: '2026-07-15T14:03:22+02:00',
-    received_at: '2026-07-15T12:00:00.000Z',
+    created_date: '2026-07-15',
+    received_date: FIXED_RECEIVED_DATE,
     engine_version: 'engine-1.4.2',
     content_version: 'sha256:ab12',
     app_data: { nodes: [['q1', 3]] },
@@ -194,12 +194,38 @@ describe('filters', () => {
 });
 
 describe('response shape', () => {
-  it('includes the server-assigned id and received_at', async () => {
+  it('includes the server-assigned id and both dates', async () => {
     const deps = makeDeps();
     seed(deps, 1);
 
     const { body } = await read(deps);
-    expect(body.records[0]).toMatchObject({ id: 1, received_at: '2026-07-15T12:00:00.000Z' });
+    expect(body.records[0]).toMatchObject({ id: 1, created_date: '2026-07-15', received_date: FIXED_RECEIVED_DATE });
+  });
+
+  // The privacy boundary, asserted on the wire rather than trusted to the schema. Records are stored
+  // to a date and no finer: a precise time here would, against any other timed source, say which
+  // visitor made which choice. Anything reintroducing one -- an extra column, a helpfully "richer"
+  // response -- has to fail a test rather than merely contradict a comment.
+  it('exposes no time of day, only dates', async () => {
+    const deps = makeDeps();
+    seed(deps, 1);
+
+    const { body } = await read(deps);
+    const record = body.records[0];
+
+    expect(Object.keys(record).sort()).toEqual([
+      'app_data',
+      'app_id',
+      'client_id',
+      'content_version',
+      'created_date',
+      'engine_version',
+      'id',
+      'instance_id',
+      'received_date',
+    ]);
+    expect(record.created_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(record.received_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it('round-trips app_data byte-identically', async () => {
