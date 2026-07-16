@@ -5,7 +5,7 @@
  * without a database and without the Worker entry point.
  */
 
-import type { WritePrincipal } from './auth';
+import type { ReadPrincipal, WritePrincipal } from './auth';
 import { MAX_REQUEST_BODY_BYTES, MAX_RESPONSE_BYTES } from './config';
 import { errorResponse, isJsonContentType, jsonResponse, readCappedText } from './http';
 import type { Deps, InsertOutcome, NewRecord, StoredRecord } from './storage';
@@ -139,7 +139,6 @@ function readClientId(raw: unknown): string | null {
  *
  * ```
  * GET /v1/records?after_id=184002&limit=1000
- *               [&app=…][&instance=…]
  *               [&engine_version=…][&content_version=…]
  * Authorization: Bearer <read-key>
  *
@@ -147,6 +146,12 @@ function readClientId(raw: unknown): string | null {
  *   "next_after_id": 185002,
  *   "has_more": true }
  * ```
+ *
+ * Returns one installation's records — the one the key grants. There is no app or instance
+ * parameter: like a write, the identity comes from the API key alone, so a caller can neither
+ * widen its own scope nor read someone else's by editing a URL. `engine_version` and
+ * `content_version` still narrow *within* that scope, since they select versions of the caller's
+ * own data rather than whose data it is.
  *
  * The cursor is the autoincrement `id` rather than a timestamp: unambiguous, collision-free, and
  * trivially resumable. `after_id` is an exclusive lower bound and defaults to 0, so
@@ -156,11 +161,11 @@ function readClientId(raw: unknown): string | null {
  * means the download is complete. A page may be short because it hit the response byte budget,
  * and that is a normal, expected occurrence rather than an error.
  */
-export async function handleGetRecords(url: URL, deps: Deps): Promise<Response> {
+export async function handleGetRecords(url: URL, principal: ReadPrincipal, deps: Deps): Promise<Response> {
   const query = validateReadQuery(url.searchParams);
   if (!query.ok) return errorResponse(400, query.error.code, query.error.message);
 
-  const page = await deps.recordStore.list(query.value);
+  const page = await deps.recordStore.list(principal, query.value);
   const { records, hasMore } = trimToByteBudget(page.records, page.hasMore);
 
   const lastId = records.length > 0 ? records[records.length - 1].id : query.value.afterId;

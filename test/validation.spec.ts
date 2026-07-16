@@ -219,14 +219,10 @@ describe('read query', () => {
     expect(expectOk(query(''))).toMatchObject({ afterId: 0, limit: 100 });
   });
 
-  it('parses filters', () => {
-    expect(
-      expectOk(query('after_id=184002&limit=1000&app=a1&instance=i1&engine_version=v1&content_version=c1')),
-    ).toEqual({
+  it('parses paging and filters', () => {
+    expect(expectOk(query('after_id=184002&limit=1000&engine_version=v1&content_version=c1'))).toEqual({
       afterId: 184002,
       limit: 1000,
-      appId: 'a1',
-      instanceId: 'i1',
       engineVersion: 'v1',
       contentVersion: 'c1',
     });
@@ -267,12 +263,20 @@ describe('read query', () => {
     expect(expectFail(query('limit=10&limit=20')).message).toContain('limit');
   });
 
-  // The boundary is pinned at a literal 100 rather than read from MAX_ID_LENGTH: it has to match
-  // the length CHECK on the schema columns, and a test that imports the constant would happily
-  // follow it if someone changed it out from under the schema.
+  // The boundary is pinned at a literal 256 rather than read from MAX_VERSION_LENGTH: a test that
+  // imports the constant would happily follow it wherever someone moved it, and this is a limit
+  // client authors code against.
   it('rejects empty and over-long filter values', () => {
-    expect(expectFail(query('app=')).code).toBe('invalid_request');
-    expect(query(`instance=${'x'.repeat(100)}`).ok).toBe(true);
-    expect(expectFail(query(`instance=${'x'.repeat(101)}`)).code).toBe('invalid_request');
+    expect(expectFail(query('engine_version=')).code).toBe('invalid_request');
+    expect(query(`content_version=${'x'.repeat(256)}`).ok).toBe(true);
+    expect(expectFail(query(`content_version=${'x'.repeat(257)}`)).code).toBe('invalid_request');
+  });
+
+  // A read's scope is settled by the key. These once selected an installation; leaving them
+  // accepted-and-ignored would mean an operator asking for one museum and silently being handed
+  // another's, so they must be as unknown as any other typo.
+  it('rejects app and instance as unknown parameters', () => {
+    expect(expectFail(query('app=a1')).message).toContain('app');
+    expect(expectFail(query('instance=i1')).message).toContain('instance');
   });
 });

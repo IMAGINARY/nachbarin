@@ -8,7 +8,7 @@
  * values, so the handler tests exercise genuine behaviour while the database is still unbuilt.
  */
 
-import type { Principal, WritePrincipal } from '../src/auth';
+import type { Principal, ReadPrincipal, WritePrincipal } from '../src/auth';
 import type { Deps, InsertOutcome, KeyStore, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from '../src/storage';
 
 export class FakeKeyStore implements KeyStore {
@@ -67,14 +67,15 @@ export class FakeRecordStore implements RecordStore {
     return Promise.resolve(outcomes);
   }
 
-  list(query: ListQuery): Promise<ListPage> {
+  list(principal: ReadPrincipal, query: ListQuery): Promise<ListPage> {
     this.listCalls++;
     if (this.failWith !== null) return Promise.reject(this.failWith);
 
     const matching = this.rows
+      // The scope, not a filter: a read key sees its own installation and nothing else. Applied
+      // before anything the caller chose, because nothing the caller chooses can widen it.
+      .filter((row) => row.app_id === principal.appId && row.instance_id === principal.instanceId)
       .filter((row) => row.id > query.afterId)
-      .filter((row) => query.appId === null || row.app_id === query.appId)
-      .filter((row) => query.instanceId === null || row.instance_id === query.instanceId)
       .filter((row) => query.engineVersion === null || row.engine_version === query.engineVersion)
       // Mirrors SQL equality: a NULL content_version never matches a filter value.
       .filter((row) => query.contentVersion === null || row.content_version === query.contentVersion)
@@ -112,10 +113,17 @@ export const WRITE_C: WritePrincipal = {
   instanceId: 'instance-a',
 };
 
+/** Reads installation A — the same installation {@link WRITE_A} writes to. */
+export const READ_A: ReadPrincipal = { kind: 'read', appId: 'app-1', instanceId: 'instance-a' };
+
+/** Reads installation C. Its existence is what lets a spec prove one read key cannot see another's. */
+export const READ_C: ReadPrincipal = { kind: 'read', appId: 'app-2', instanceId: 'instance-a' };
+
 export const KEY_A = 'key-write-a';
 export const KEY_B = 'key-write-b';
 export const KEY_C = 'key-write-c';
-export const KEY_READ = 'key-read';
+export const KEY_READ = 'key-read-a';
+export const KEY_READ_C = 'key-read-c';
 
 export const FIXED_NOW = new Date('2026-07-15T12:00:00.000Z');
 
@@ -124,13 +132,14 @@ export interface TestDeps extends Deps {
   readonly recordStore: FakeRecordStore;
 }
 
-/** Deps pre-wired with three write keys and one read key. */
+/** Deps pre-wired with three write keys and two read keys, on three installations. */
 export function makeDeps(): TestDeps {
   const keyStore = new FakeKeyStore()
     .set(KEY_A, WRITE_A)
     .set(KEY_B, WRITE_B)
     .set(KEY_C, WRITE_C)
-    .set(KEY_READ, { kind: 'read' });
+    .set(KEY_READ, READ_A)
+    .set(KEY_READ_C, READ_C);
 
   return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW };
 }

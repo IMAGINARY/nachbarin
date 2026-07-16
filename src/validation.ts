@@ -5,14 +5,7 @@
  * malformed request never reaches the database.
  */
 
-import {
-  MAX_APP_DATA_BYTES,
-  MAX_ID_LENGTH,
-  MAX_RECORDS_PER_BATCH,
-  MAX_VERSION_LENGTH,
-  READ_LIMIT_DEFAULT,
-  READ_LIMIT_MAX,
-} from './config';
+import { MAX_APP_DATA_BYTES, MAX_RECORDS_PER_BATCH, MAX_VERSION_LENGTH, READ_LIMIT_DEFAULT, READ_LIMIT_MAX } from './config';
 import type { ErrorCode } from './http';
 import type { ListQuery, NewRecord } from './storage';
 
@@ -254,7 +247,10 @@ export function validateWriteEnvelope(body: unknown): Result<unknown[], Failure>
 // Read
 // ---------------------------------------------------------------------------
 
-const QUERY_KEYS = ['after_id', 'limit', 'app', 'instance', 'engine_version', 'content_version'];
+// No `app` or `instance`: a read's scope is settled by the key, not chosen by the caller. Since
+// unknown parameters are rejected below rather than ignored, a client still sending `?app=` gets a
+// 400 naming it — not a silently different scope.
+const QUERY_KEYS = ['after_id', 'limit', 'engine_version', 'content_version'];
 
 /**
  * Parses a non-negative integer from a query parameter.
@@ -282,6 +278,9 @@ function optionalFilter(raw: string | null, field: string, maxLength: number): R
 
 /**
  * Validates read query parameters.
+ *
+ * Produces only what the caller may choose. The installation is not among it: that comes from the
+ * key, which is why this stays a pure function of the URL and never sees a principal.
  *
  * Unknown and repeated parameters are rejected rather than ignored. This looks pedantic and is
  * not: `?after=184002` would leave `after_id` at its default, silently restarting the cursor at
@@ -322,12 +321,6 @@ export function validateReadQuery(params: URLSearchParams): Result<ListQuery, Fa
     limit = parsed;
   }
 
-  const appId = optionalFilter(params.get('app'), 'app', MAX_ID_LENGTH);
-  if (!appId.ok) return appId;
-
-  const instanceId = optionalFilter(params.get('instance'), 'instance', MAX_ID_LENGTH);
-  if (!instanceId.ok) return instanceId;
-
   const engineVersion = optionalFilter(params.get('engine_version'), 'engine_version', MAX_VERSION_LENGTH);
   if (!engineVersion.ok) return engineVersion;
 
@@ -337,8 +330,6 @@ export function validateReadQuery(params: URLSearchParams): Result<ListQuery, Fa
   return ok({
     afterId,
     limit,
-    appId: appId.value,
-    instanceId: instanceId.value,
     engineVersion: engineVersion.value,
     contentVersion: contentVersion.value,
   });

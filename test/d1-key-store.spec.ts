@@ -9,7 +9,17 @@
 import { env } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { D1KeyStore } from '../src/d1-key-store';
-import { KEY_READER, KEY_REVOKED, KEY_UNKNOWN, KEY_WRITE, SEEDED_APP, SEEDED_INSTANCE, seedKeys } from './seed';
+import {
+  KEY_READER,
+  KEY_REVOKED,
+  KEY_UNKNOWN,
+  KEY_WRITE,
+  SEEDED_APP,
+  SEEDED_APP_OTHER,
+  SEEDED_INSTANCE,
+  SEEDED_INSTANCE_OTHER,
+  seedKeys,
+} from './seed';
 
 beforeAll(seedKeys);
 
@@ -27,8 +37,16 @@ describe('D1KeyStore.resolve', () => {
     });
   });
 
-  it('resolves a read key', async () => {
-    expect(await store().resolve(KEY_READER)).toEqual({ kind: 'read' });
+  // Seeded on a *different* installation from the write key on purpose. A read key's installation
+  // is now what decides which records it may download, so resolving it to the wrong one would hand
+  // an operator another museum's data — and with both keys on one installation, an implementation
+  // that returned "whichever installation the join found" would pass this test.
+  it('resolves a read key to its own app and instance', async () => {
+    expect(await store().resolve(KEY_READER)).toEqual({
+      kind: 'read',
+      appId: SEEDED_APP_OTHER,
+      instanceId: SEEDED_INSTANCE_OTHER,
+    });
   });
 
   it('returns null for an unknown key', async () => {

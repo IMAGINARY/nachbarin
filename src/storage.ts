@@ -13,7 +13,7 @@
  * validation path against a real fake `KeyStore` while `RecordStore` is still a stub.
  */
 
-import type { Principal, WritePrincipal } from './auth';
+import type { Principal, ReadPrincipal, WritePrincipal } from './auth';
 
 export interface KeyStore {
   /**
@@ -76,12 +76,17 @@ export interface StoredRecord {
   readonly app_data: unknown;
 }
 
+/**
+ * The parts of a read the caller chooses — paging and optional filters.
+ *
+ * Deliberately carries no app or instance. Which installation's records a download may see is
+ * settled by the key, and arrives at {@link RecordStore.list} as a {@link ReadPrincipal}. Keeping
+ * the two apart is what lets `validation.ts` stay a pure function of the wire.
+ */
 export interface ListQuery {
   /** Exclusive lower bound on `id`. Zero means "from the beginning". */
   readonly afterId: number;
   readonly limit: number;
-  readonly appId: string | null;
-  readonly instanceId: string | null;
   readonly engineVersion: string | null;
   readonly contentVersion: string | null;
 }
@@ -114,7 +119,16 @@ export interface RecordStore {
    */
   insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[]): Promise<InsertOutcome[]>;
 
-  list(query: ListQuery): Promise<ListPage>;
+  /**
+   * Returns one page of `principal`'s installation's records, oldest first.
+   *
+   * The principal is the scope and is not optional: implementations must constrain to its
+   * `(app_id, instance_id)` pair, not merely filter by it. `query` only narrows further within
+   * that scope. A `list` that ignored the principal would hand one museum another's data while
+   * every paging test still passed, so it is passed separately from {@link ListQuery} rather than
+   * folded into it — the same shape `insert` already uses, and for the same reason.
+   */
+  list(principal: ReadPrincipal, query: ListQuery): Promise<ListPage>;
 }
 
 /** Thrown by the stubs below. Maps to 501. */

@@ -6,19 +6,33 @@
  */
 
 /**
- * One installation — an app running at an instance. Write-only: it can never read.
+ * An app running at an instance — the only thing a key can grant, whatever its kind.
  *
  * `app` names the software module; `instance` names where it runs (a museum, or one copy of a
  * travelling exhibition). Neither identifies a record on its own: the pair does.
  */
-export interface WritePrincipal {
-  readonly kind: 'write';
+export interface Installation {
   readonly appId: string;
   readonly instanceId: string;
 }
 
-/** The bulk/incremental download identity. Read-only. */
-export interface ReadPrincipal {
+/** Deposits records into one installation. Write-only: it can never read. */
+export interface WritePrincipal extends Installation {
+  readonly kind: 'write';
+}
+
+/**
+ * Downloads one installation's records, incrementally. Read-only.
+ *
+ * Scoped exactly like a write key, and for the same reason: the scope of a read is authorization,
+ * not a filter the caller picks. `GET /v1/records` therefore takes no app or instance parameter —
+ * a read key that could name its own scope would be a read key that could name someone else's.
+ *
+ * There is deliberately no global variant. Every real download is "my installation's records"; a
+ * genuine full-corpus export is rare, irreversible operator work that belongs in `wrangler d1
+ * execute` next to the rest of the hand-typed SQL, not behind a token that can leak.
+ */
+export interface ReadPrincipal extends Installation {
   readonly kind: 'read';
 }
 

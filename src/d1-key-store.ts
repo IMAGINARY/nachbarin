@@ -68,10 +68,10 @@ export class D1KeyStore implements KeyStore {
     // caller — both are 401.
     if (row === null) return null;
 
-    if (row.kind === 'read') return { kind: 'read' };
-
-    if (row.kind === 'write') {
-      return { kind: 'write', appId: row.app_id, instanceId: row.instance_id };
+    // Both kinds carry an installation and differ only by what they may do with it, so `kind` is the
+    // whole mapping.
+    if (row.kind === 'read' || row.kind === 'write') {
+      return { kind: row.kind, appId: row.app_id, instanceId: row.instance_id };
     }
 
     // Unreachable while the CHECK on `kind` holds — which is the point: the schema and the type

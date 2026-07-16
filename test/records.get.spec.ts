@@ -3,7 +3,7 @@ import { handleRequest } from '../src/app';
 import { MAX_RESPONSE_BYTES } from '../src/config';
 import { StorageUnavailableError } from '../src/storage';
 import type { StoredRecord } from '../src/storage';
-import { getRequest, KEY_READ, makeDeps, type TestDeps } from './fakes';
+import { getRequest, KEY_READ, KEY_READ_C, makeDeps, type TestDeps } from './fakes';
 
 interface ReadResponse {
   records: StoredRecord[];
@@ -30,8 +30,8 @@ function seed(deps: TestDeps, count: number, overrides: (i: number) => Partial<S
   for (let i = 1; i <= count; i++) deps.recordStore.rows.push(row(i, overrides(i)));
 }
 
-const read = async (deps: TestDeps, query = '') => {
-  const response = await handleRequest(getRequest(query, KEY_READ), deps);
+const read = async (deps: TestDeps, query = '', key = KEY_READ) => {
+  const response = await handleRequest(getRequest(query, key), deps);
   return { response, body: await response.json<ReadResponse>() };
 };
 
@@ -108,16 +108,65 @@ describe('empty pages', () => {
   });
 });
 
-describe('filters', () => {
-  it('filters by each identity and version field', async () => {
+describe('scope', () => {
+  // The installation comes from the key, so a read key is confined to its own records. `row()`
+  // defaults to installation A, which is what KEY_READ grants; the others below belong elsewhere.
+  it('returns only the records of the key’s own installation', async () => {
     const deps = makeDeps();
     deps.recordStore.rows.push(
-      row(1, { app_id: 'a1', instance_id: 'i1', engine_version: 'v1', content_version: 'c1' }),
-      row(2, { app_id: 'a2', instance_id: 'i2', engine_version: 'v2', content_version: 'c2' }),
+      row(1),
+      row(2, { app_id: 'app-2', instance_id: 'instance-a' }),
+      row(3),
+      row(4, { app_id: 'app-1', instance_id: 'instance-b' }),
     );
 
-    expect((await read(deps, '?app=a1')).body.records.map((r) => r.id)).toEqual([1]);
-    expect((await read(deps, '?instance=i2')).body.records.map((r) => r.id)).toEqual([2]);
+    expect((await read(deps)).body.records.map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  // Two read keys, one store, disjoint views. `app-2/instance-a` shares an *instance* with A and
+  // differs only by app — the axis a scope keyed on instance_id alone would get wrong.
+  it('gives two read keys disjoint views of the same store', async () => {
+    const deps = makeDeps();
+    deps.recordStore.rows.push(row(1), row(2, { app_id: 'app-2', instance_id: 'instance-a' }));
+
+    expect((await read(deps, '', KEY_READ)).body.records.map((r) => r.id)).toEqual([1]);
+    expect((await read(deps, '', KEY_READ_C)).body.records.map((r) => r.id)).toEqual([2]);
+  });
+
+  // The scope is authorization, not a default to be overridden. Because unknown parameters are
+  // rejected rather than ignored, asking for someone else's installation is a loud 400 rather than
+  // a silently honoured or silently dropped request.
+  it('400s an attempt to name an app or instance', async () => {
+    const deps = makeDeps();
+
+    for (const query of ['?app=app-2', '?instance=instance-b', '?app=app-2&instance=instance-a']) {
+      const { response, body } = await read(deps, query);
+      expect(response.status).toBe(400);
+      expect(JSON.stringify(body)).toContain('unknown query parameter');
+    }
+    expect(deps.recordStore.listCalls).toBe(0);
+  });
+
+  // Paging must not leak across the scope either: the cursor is only a lower bound on id, and ids
+  // are global, so an unscoped read would page straight through a neighbour's records.
+  it('keeps the cursor inside the scope', async () => {
+    const deps = makeDeps();
+    deps.recordStore.rows.push(row(1), row(2, { app_id: 'app-2', instance_id: 'instance-a' }), row(3));
+
+    const { body } = await read(deps, '?after_id=1');
+    expect(body.records.map((r) => r.id)).toEqual([3]);
+    expect(body.has_more).toBe(false);
+  });
+});
+
+describe('filters', () => {
+  it('filters by each version field within the scope', async () => {
+    const deps = makeDeps();
+    deps.recordStore.rows.push(
+      row(1, { engine_version: 'v1', content_version: 'c1' }),
+      row(2, { engine_version: 'v2', content_version: 'c2' }),
+    );
+
     expect((await read(deps, '?engine_version=v1')).body.records.map((r) => r.id)).toEqual([1]);
     expect((await read(deps, '?content_version=c2')).body.records.map((r) => r.id)).toEqual([2]);
   });
@@ -125,12 +174,12 @@ describe('filters', () => {
   it('combines filters', async () => {
     const deps = makeDeps();
     deps.recordStore.rows.push(
-      row(1, { instance_id: 'i1', content_version: 'c1' }),
-      row(2, { instance_id: 'i1', content_version: 'c2' }),
-      row(3, { instance_id: 'i2', content_version: 'c1' }),
+      row(1, { engine_version: 'v1', content_version: 'c1' }),
+      row(2, { engine_version: 'v1', content_version: 'c2' }),
+      row(3, { engine_version: 'v2', content_version: 'c1' }),
     );
 
-    expect((await read(deps, '?instance=i1&content_version=c1')).body.records.map((r) => r.id)).toEqual([1]);
+    expect((await read(deps, '?engine_version=v1&content_version=c1')).body.records.map((r) => r.id)).toEqual([1]);
   });
 
   // Documents a known gap: SQL equality never matches NULL, so now that content_version is

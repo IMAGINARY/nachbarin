@@ -76,7 +76,7 @@ async function route(request: Request, deps: Deps): Promise<Response> {
   if (principal.kind !== 'read') {
     return errorResponse(403, 'forbidden', 'this key may not read records');
   }
-  return handleGetRecords(url, deps);
+  return handleGetRecords(url, principal, deps);
 }
 
 /** 401 means "I don't know who you are"; 403 means "I know, and you may not do this". */
