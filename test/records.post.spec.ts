@@ -13,6 +13,7 @@ import {
   SKEWED_CREATED_DATE,
   uuid,
   validRecord,
+  WRITE_A,
 } from './fakes';
 
 interface WriteResponse {
@@ -292,5 +293,80 @@ describe('validation precedes storage', () => {
     const upper = uuid().toUpperCase();
     const { deps } = await post({ records: [validRecord({ client_id: upper })] });
     expect(deps.recordStore.rows[0].client_id).toBe(upper.toLowerCase());
+  });
+
+  // A rejected record gets no log row, deliberately. Logging one would put storage before validation
+  // — the ordering this whole handler is built around — and would let anyone holding a key write
+  // rows into the log by sending garbage.
+  it('never logs a rejected record', async () => {
+    const deps = makeDeps();
+    const good = validRecord();
+    await handleRequest(postRequest({ records: [good, validRecord({ client_id: 'bad' })] }), deps);
+
+    expect(deps.recordStore.submissions).toHaveLength(1);
+    expect(deps.recordStore.submissions[0].clientId).toBe(good.client_id);
+  });
+});
+
+describe('the submission log', () => {
+  const cfRequest = (body: unknown) =>
+    postRequest(body, KEY_A, {
+      headers: { 'cf-connecting-ip': '203.0.113.9', 'user-agent': 'nachbarin-engine/1.4.2' },
+    });
+
+  it('logs one row per submitted record, carrying the edge data', async () => {
+    const deps = makeDeps();
+    await handleRequest(cfRequest({ records: [validRecord(), validRecord()] }), deps);
+
+    expect(deps.recordStore.submissions).toHaveLength(2);
+    expect(deps.recordStore.submissions[0]).toMatchObject({
+      clientIp: '203.0.113.9',
+      userAgent: 'nachbarin-engine/1.4.2',
+      keyId: WRITE_A.keyId,
+      appId: WRITE_A.appId,
+      instanceId: WRITE_A.instanceId,
+    });
+  });
+
+  // The grain, at the handler level: the client is told `duplicate` and the log still gains a row.
+  // That row is the only evidence the resubmission ever happened.
+  it('logs a duplicate resend even though no record is stored', async () => {
+    const deps = makeDeps();
+    const one = validRecord();
+
+    await handleRequest(postRequest({ records: [one] }), deps);
+    const second = await handleRequest(postRequest({ records: [one] }), deps);
+
+    expect((await second.json<WriteResponse>()).results[0].status).toBe('duplicate');
+    expect(deps.recordStore.rows).toHaveLength(1);
+    expect(deps.recordStore.submissions).toHaveLength(2);
+  });
+
+  it('shares one submission id across a batch and mints a new one per request', async () => {
+    const deps = makeDeps();
+    await handleRequest(postRequest({ records: [validRecord(), validRecord()] }), deps);
+    await handleRequest(postRequest({ records: [validRecord()] }), deps);
+
+    const [a, b, c] = deps.recordStore.submissions;
+    expect(a.submissionId).toBe(b.submissionId);
+    expect(c.submissionId).not.toBe(a.submissionId);
+  });
+
+  // The precision `records` throws away, which is this table's entire reason to exist. The offset
+  // must survive: a store that normalized to UTC would still look right in every other assertion.
+  it('logs created_at verbatim while the record keeps only its date', async () => {
+    const deps = makeDeps();
+    await handleRequest(postRequest({ records: [validRecord({ created_at: SKEWED_CREATED_AT })] }), deps);
+
+    expect(deps.recordStore.submissions[0].createdAt).toBe(SKEWED_CREATED_AT);
+    expect(deps.recordStore.rows[0].created_date).toBe(SKEWED_CREATED_DATE);
+  });
+
+  // No `cf` and no Cloudflare headers — the default under test, and never an error.
+  it('logs nulls rather than failing when the edge told us nothing', async () => {
+    const { deps, response } = await post({ records: [validRecord()] });
+
+    expect(response.status).toBe(200);
+    expect(deps.recordStore.submissions[0]).toMatchObject({ clientIp: null, country: null, asn: null });
   });
 });

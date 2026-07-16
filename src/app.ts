@@ -7,7 +7,7 @@
 import { parseBearerToken } from './auth';
 import { handleGetRecords, handlePostRecords } from './handlers';
 import { errorResponse } from './http';
-import { type Deps, NotImplementedError, StorageUnavailableError } from './storage';
+import { type Deps, StorageUnavailableError } from './storage';
 
 const RECORDS_PATH = '/v1/records';
 const RECORDS_ALLOW = 'GET, POST';
@@ -18,7 +18,7 @@ const RECORDS_ALLOW = 'GET, POST';
  * The pipeline order is deliberate:
  *
  *   route (404/405) -> authenticate (401/403) -> media type (415) -> read body (413)
- *   -> parse (400) -> validate (400) -> store (200/500/501/503)
+ *   -> parse (400) -> validate (400) -> store (200/500/503)
  *
  * Routing precedes authentication so an unknown path 404s without needing a key; the API surface
  * is documented, so hiding it buys nothing. Authentication precedes reading the body so an
@@ -28,9 +28,6 @@ export async function handleRequest(request: Request, deps: Deps): Promise<Respo
   try {
     return await route(request, deps);
   } catch (error) {
-    if (error instanceof NotImplementedError) {
-      return errorResponse(501, 'not_implemented', error.message);
-    }
     if (error instanceof StorageUnavailableError) {
       // Retryable: the client should keep the batch queued and send it again. Idempotency via
       // client_id is what makes that safe.

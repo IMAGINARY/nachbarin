@@ -156,3 +156,73 @@ describe('storage against real D1', () => {
     expect(body.next_after_id).toBe(0);
   });
 });
+
+describe('the submission log, end to end', () => {
+  // The only place the real `request.cf` reaches the real adapter. `SELF.fetch` cannot carry a `cf`,
+  // so this goes through `worker.fetch` directly -- which is exactly what `IncomingRequest` is for.
+  //
+  // `crypto.randomUUID` is live here rather than the fakes' counter, so this also proves the id the
+  // real wiring mints satisfies the schema's UUID CHECK.
+  it('writes the full timestamps and the edge data that GET refuses to show', async () => {
+    const request = new IncomingRequest('https://example.com/v1/records', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${KEY_WRITE}`,
+        'cf-connecting-ip': '203.0.113.9',
+        'user-agent': 'nachbarin-engine/1.4.2',
+      },
+      body: JSON.stringify({ records: [VALID_RECORD] }),
+      // Cast because the type insists on every field (httpProtocol, tlsVersion, …) while a real
+      // request carries whatever the edge resolved and no more. A partial `cf` is the honest fixture
+      // here — it is the shape `provenance.ts` exists to cope with.
+      cf: {
+        country: 'DE',
+        city: 'Munich',
+        asn: 3320,
+        asOrganization: 'Deutsche Telekom AG',
+        colo: 'FRA',
+        timezone: 'Europe/Berlin',
+      } as IncomingRequestCfProperties,
+    });
+
+    const response = await worker.fetch(request, env);
+    expect(response.status).toBe(200);
+
+    const row = await env.DB.prepare('SELECT * FROM record_submissions').first<Record<string, unknown>>();
+    expect(row).toMatchObject({
+      // Verbatim, offset intact -- the fact `records` is built to discard and this table to keep.
+      created_at: VALID_RECORD.created_at,
+      client_id: VALID_RECORD.client_id,
+      client_ip: '203.0.113.9',
+      user_agent: 'nachbarin-engine/1.4.2',
+      cf_country: 'DE',
+      cf_city: 'Munich',
+      cf_asn: 3320,
+      cf_colo: 'FRA',
+      cf_timezone: 'Europe/Berlin',
+    });
+
+    // The two tables disagree on purpose, and this is the pair that proves it: the log has the
+    // clock, and nothing the read API returns does.
+    const body = await (await read(KEY_READER_SAME)).json<ReadResponse>();
+    expect(JSON.stringify(body.records)).not.toMatch(/\d{2}:\d{2}/);
+  });
+
+  it('sweeps expired rows on the scheduled handler', async () => {
+    await post(KEY_WRITE, { records: [VALID_RECORD] });
+    // Age it past the window rather than waiting 90 days.
+    await env.DB.prepare(`UPDATE record_submissions SET received_at = '2020-01-01T00:00:00.000Z'`).run();
+
+    // Two arguments, not three: `scheduled` awaits its own work, so it takes no `ctx` — the same
+    // reason `fetch` does not.
+    await worker.scheduled({ scheduledTime: Date.now(), cron: '17 3 * * *', noRetry: () => undefined }, env);
+
+    const { results } = await env.DB.prepare('SELECT id FROM record_submissions').all();
+    expect(results).toHaveLength(0);
+
+    // And the record it described is untouched -- still downloadable, still dateless.
+    const body = await (await read(KEY_READER_SAME)).json<ReadResponse>();
+    expect(body.records).toHaveLength(1);
+  });
+});

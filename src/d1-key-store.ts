@@ -10,6 +10,7 @@ import type { KeyStore } from './storage';
 
 /** The one row {@link D1KeyStore.resolve} reads. */
 interface KeyRow {
+  readonly id: number;
   readonly kind: string;
   readonly app_id: string;
   readonly instance_id: string;
@@ -21,9 +22,13 @@ interface KeyRow {
  *
  * `revoked_at IS NULL` is the other half of soft deletion. Forgetting it would silently resurrect
  * every revoked key ever issued.
+ *
+ * `k.id` is selected because the submission log records which key wrote each record, and this query
+ * is the only place that number is ever in hand — the client presents a key, and the hash it maps to
+ * is one-way. See `Credential` in `auth.ts`.
  */
 const RESOLVE_SQL = `
-  SELECT k.kind, i.app_id, i.instance_id
+  SELECT k.id, k.kind, i.app_id, i.instance_id
   FROM api_keys k
   JOIN installations i ON i.id = k.installation_pk
   WHERE k.key_hash = ?1 AND k.revoked_at IS NULL
@@ -70,7 +75,7 @@ export class D1KeyStore implements KeyStore {
     // Both kinds carry an installation and differ only by what they may do with it, so `kind` is the
     // whole mapping.
     if (row.kind === 'read' || row.kind === 'write') {
-      return { kind: row.kind, appId: row.app_id, instanceId: row.instance_id };
+      return { kind: row.kind, appId: row.app_id, instanceId: row.instance_id, keyId: row.id };
     }
 
     // Unreachable while the CHECK on `kind` holds — which is the point: the schema and the type

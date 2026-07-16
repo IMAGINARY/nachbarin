@@ -50,10 +50,6 @@ info:
 
     Every behaviour documented here is live and backed by the database: records are written, read,
     deduplicated and paged for real.
-
-    `501` `not_implemented` is retained on both operations but nothing currently returns it. It is
-    the documented answer for a seam that exists without an adapter behind it, and the next one —
-    the operator-side metadata store — will pass through exactly that state.
   license:
     name: MIT
     url: https://github.com/elondaits/nachbarin/blob/main/LICENSE
@@ -190,8 +186,6 @@ paths:
                 message: Content-Type must be application/json
         '500':
           $ref: '#/components/responses/InternalError'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/Unavailable'
 
@@ -279,8 +273,6 @@ paths:
                 message: this key may not read records
         '500':
           $ref: '#/components/responses/InternalError'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/Unavailable'
 
@@ -376,18 +368,6 @@ components:
             $ref: '#/components/schemas/Error'
           example:
             error: internal_error
-    NotImplemented:
-      description: |
-        The request was accepted and validated, but the storage it needs has no adapter behind it.
-        Nothing returns this today — record storage is live. Permanent, not retryable: unlike a
-        `503`, sending the batch again changes nothing until the service does.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: not_implemented
-            message: RecordStore.insert is not implemented yet
     Unavailable:
       description: |
         Storage is temporarily unavailable. Retryable: keep the batch queued and send it again.
@@ -423,7 +403,6 @@ components:
         - payload_too_large
         - unsupported_media_type
         - internal_error
-        - not_implemented
         - unavailable
 
     Error:
@@ -593,9 +572,9 @@ components:
         the same sentence, and that inference is not one this API should make cheap. A date is what
         anyone analysing this data segments by anyway.
 
-        The full timestamps are retained in a separate operator-side metadata table, with its own
-        access privileges and its own retention policy, precisely so that the table read by the most
-        people is the one that reveals the least.
+        The full timestamps are retained in a separate operator-side submission log, which no key of
+        any kind can read and which is swept after 90 days — precisely so that the table read by the
+        most people is the one that reveals the least.
 
         The honest limit of that: `id` is monotonic and returned here, so the *order* of one
         installation's records is visible, and a reader who knows the opening hours can place a

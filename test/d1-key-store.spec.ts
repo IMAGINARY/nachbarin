@@ -10,6 +10,8 @@ import { env } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { D1KeyStore } from '../src/d1-key-store';
 import {
+  ID_READER,
+  ID_WRITE,
   KEY_READER,
   KEY_REVOKED,
   KEY_UNKNOWN,
@@ -29,11 +31,16 @@ describe('D1KeyStore.resolve', () => {
   // The golden fixtures are hashes of the documented minting command, computed outside this code.
   // If sha256Hex ever disagrees with `printf %s "$key" | shasum -a 256`, every key an operator mints
   // by the book 401s forever — and this is the only test that would notice.
+  //
+  // `keyId` is here because it is the only handle on a key that exists — the hash is one-way — and
+  // this query is the only place it is ever in hand. The submission log records it so that revoking
+  // one station's key is a targeted act rather than a re-key of the building.
   it('resolves a write key to its app and instance', async () => {
     expect(await store().resolve(KEY_WRITE)).toEqual({
       kind: 'write',
       appId: SEEDED_APP,
       instanceId: SEEDED_INSTANCE,
+      keyId: ID_WRITE,
     });
   });
 
@@ -46,6 +53,7 @@ describe('D1KeyStore.resolve', () => {
       kind: 'read',
       appId: SEEDED_APP_OTHER,
       instanceId: SEEDED_INSTANCE_OTHER,
+      keyId: ID_READER,
     });
   });
 

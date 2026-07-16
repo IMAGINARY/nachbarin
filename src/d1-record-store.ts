@@ -1,15 +1,20 @@
 /**
  * D1 adapter for {@link RecordStore}.
  *
- * The other half of the persistence boundary, alongside `d1-key-store.ts`, and the last seam in
- * `storage.ts` to be filled.
+ * The other half of the persistence boundary, alongside `d1-key-store.ts`.
  *
- * This adapter is where records get coarsened. It receives a full RFC 3339 `createdAt` and a full
- * `receivedAt`, and deliberately stores only their dates — see `migrations/0003_create_records.sql`
- * for why, and the metadata table (a later change) for where the exact times go instead.
+ * This adapter is where records get coarsened *and* where the precision is kept — the two are one
+ * transaction, and that is the whole point. `records` takes only the dates of `createdAt` and
+ * `receivedAt` (`migrations/0003_create_records.sql` argues why); `record_submissions` takes them
+ * whole, along with what the edge knew about the request, behind different privileges and a 90-day
+ * sweep (`migrations/0004_log_record_submissions.sql`).
+ *
+ * Splitting those into two adapters would split them across transactions, which is the one thing
+ * neither table can afford. See {@link RecordStore.insert}.
  */
 
 import type { ReadPrincipal, WritePrincipal } from './auth';
+import type { Provenance } from './provenance';
 import type { InsertOutcome, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from './storage';
 import { localDateOf } from './validation';
 
@@ -31,6 +36,34 @@ const INSERT_SQL = `
   INSERT INTO records (installation_pk, client_id, created_date, received_date, engine_version, content_version, app_data)
   VALUES ((SELECT id FROM installations WHERE app_id = ?1 AND instance_id = ?2), ?3, ?4, ?5, ?6, ?7, ?8)
   ON CONFLICT (installation_pk, client_id) DO NOTHING
+`;
+
+/**
+ * The provenance of one submitted record: the full timestamps and what the edge knew.
+ *
+ * Note the absences, which are the design and not an oversight. There is **no ON CONFLICT** and no
+ * unique key to conflict against: one row per submission of a client_id, so a retry writes a second
+ * row and that repetition is the signal. And there is **no record_id** — this row is keyed by
+ * `(installation_pk, client_id)`, the same natural key `records` deduplicates on, which is what makes
+ * this statement independent of the insert above. It does not need that statement's outcome, its id,
+ * or even its ordering: it is simply another statement in the same transaction.
+ *
+ * That independence is load-bearing. Keying by `records.id` would need it back from an
+ * `ON CONFLICT DO NOTHING` that returns nothing on conflict, forcing either a stale `meta.last_row_id`
+ * (wrong, silently) or a RETURNING in a second `batch()` — outside this transaction, where a failure
+ * commits the records and loses their provenance forever. See `migrations/0004_*.sql`.
+ *
+ * The installation subquery is the same pattern, and the same reasoning, as {@link INSERT_SQL}.
+ */
+const INSERT_SUBMISSION_SQL = `
+  INSERT INTO record_submissions (
+    submission_id, installation_pk, key_id, client_id, created_at, received_at,
+    client_ip, user_agent, cf_country, cf_city, cf_asn, cf_as_organization, cf_colo, cf_timezone
+  )
+  VALUES (
+    ?1, (SELECT id FROM installations WHERE app_id = ?2 AND instance_id = ?3), ?4, ?5, ?6, ?7,
+    ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+  )
 `;
 
 /**
@@ -76,16 +109,36 @@ interface RecordRow {
 export class D1RecordStore implements RecordStore {
   constructor(private readonly db: D1Database) {}
 
-  async insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[]): Promise<InsertOutcome[]> {
+  async insert(
+    principal: WritePrincipal,
+    receivedAt: Date,
+    records: readonly NewRecord[],
+    provenance: Provenance,
+  ): Promise<InsertOutcome[]> {
     // One date for the whole batch, in UTC because it is the server's clock. `created_date` is local
     // instead; the two are not comparable to the day, only to the order of magnitude. See
     // `StoredRecord.received_date`.
     const receivedDate = receivedAt.toISOString().slice(0, 10);
-    const statement = this.db.prepare(INSERT_SQL);
+    // The same instant the dates above were cut from, kept whole for the log. Fixed-width RFC 3339
+    // UTC, which is what makes the retention sweep's lexicographic comparison exact.
+    const receivedAtIso = receivedAt.toISOString();
 
-    // One statement per record, not a single multi-row VALUES: at 8 parameters each, a full batch of
-    // 100 would bind 800, and D1 caps a query at 100 bound parameters. `batch` sends them in one
-    // round trip regardless, so the multi-row form would buy nothing it does not already have.
+    const insertRecord = this.db.prepare(INSERT_SQL);
+    const insertSubmission = this.db.prepare(INSERT_SUBMISSION_SQL);
+
+    // One statement per record per table, never a multi-row VALUES: at 8 and 15 parameters each, a
+    // full batch of 100 would bind 800 and 1500, and D1 caps a query at 100 bound parameters. That
+    // cap is per *statement* within a batch, not per batch, so 200 statements of 8 and 15 have vast
+    // headroom while one statement of 800 does not. `batch` sends them in one round trip regardless.
+    //
+    // The rejected alternative is a multi-row VALUES chunked to fit — ⌊100/15⌋ = 6 records per
+    // statement. Rejected because the chunk size is then a silent function of the column count: add
+    // one column here later and the chunking quietly changes, with nothing to notice.
+    //
+    // Appended, deliberately not interleaved. `[rec, sub, rec, sub, …]` would make the outcome at
+    // `results[2i]` a decoding step every future reader has to reconstruct, and silently wrong the
+    // first time someone reorders the array. Two runs of N keep the record outcomes at their own
+    // indices.
     //
     // Not wrapped in a try/catch, for the reason `d1-key-store.ts` sets out at length: a failure here
     // must reach the error boundary in `app.ts` as a 500. `InsertOutcome` has no failure variant
@@ -93,10 +146,11 @@ export class D1RecordStore implements RecordStore {
     // would have the client treat it as acknowledged and drop the record from its retry queue.
     //
     // `batch` is also a transaction, so a fault rolls the whole batch back and the client retries it
-    // whole — which `client_id` makes safe.
-    const results = await this.db.batch(
-      records.map((record) =>
-        statement.bind(
+    // whole — which `client_id` makes safe. That is also what keeps a record and its provenance from
+    // ever existing apart: both, or neither.
+    const results = await this.db.batch([
+      ...records.map((record) =>
+        insertRecord.bind(
           principal.appId,
           principal.instanceId,
           record.clientId,
@@ -107,17 +161,44 @@ export class D1RecordStore implements RecordStore {
           record.appDataJson,
         ),
       ),
-    );
+      // One row per submitted record, whether or not the statement above stored it. A record that
+      // comes back `duplicate` still arrived, from somewhere, at some time — and that is precisely
+      // the event worth having.
+      ...records.map((record) =>
+        insertSubmission.bind(
+          provenance.submissionId,
+          principal.appId,
+          principal.instanceId,
+          principal.keyId,
+          record.clientId,
+          // Verbatim: the offset is preserved, never normalized to UTC. `records.created_date` is a
+          // slice of this same string, which is what makes that date local without any timezone
+          // being configured anywhere.
+          record.createdAt,
+          receivedAtIso,
+          provenance.clientIp,
+          provenance.userAgent,
+          provenance.country,
+          provenance.city,
+          provenance.asn,
+          provenance.asOrganization,
+          provenance.colo,
+          provenance.timezone,
+        ),
+      ),
+    ]);
 
-    // `batch` returns one result per statement in order, which is exactly the positional alignment
-    // the contract promises the caller — `handlers.ts` indexes this array against the submitted
-    // records and would silently mismatch if it were filtered or reordered.
+    // `batch` returns one result per statement in order, and the record statements are the first
+    // `records.length` of them — which is exactly the positional alignment the contract promises the
+    // caller. `handlers.ts` indexes this against the submitted records and would silently mismatch if
+    // it were filtered or reordered. Indexed rather than sliced-and-mapped so the alignment is stated
+    // at the point it is relied on.
     //
     // `changes` is the whole verdict: `ON CONFLICT DO NOTHING` inserts nothing on a conflict, so 0
     // means the (installation, client_id) was already there. This also gives the right answer for a
     // batch that legitimately carries one client_id twice — statements run sequentially inside the
     // transaction, so the second sees the first and reports `duplicate`.
-    return results.map((result) => (result.meta.changes === 1 ? 'created' : 'duplicate'));
+    return records.map((_, i) => (results[i].meta.changes === 1 ? 'created' : 'duplicate'));
   }
 
   async list(principal: ReadPrincipal, query: ListQuery): Promise<ListPage> {

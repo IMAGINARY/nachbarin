@@ -30,6 +30,22 @@ export const KEY_UNKNOWN = 'test-unknown-key';
  */
 export const KEY_READER_SAME = 'test-read-key-museum-x';
 
+/**
+ * Key ids, assigned rather than left to the rowid.
+ *
+ * `record_submissions.key_id` records which key wrote a record, so a spec has to be able to say what
+ * the right answer is. Spelled out for the same reason the installation ids are: an implicit id is
+ * an id the test has to go and read back, and a test that reads the answer out of the database
+ * cannot notice the database being wrong.
+ *
+ * Deliberately not 1..4. They must not coincide with `installation_pk` (1 and 2), or a store that
+ * logged the installation into `key_id` would pass.
+ */
+export const ID_WRITE = 41;
+export const ID_READER = 42;
+export const ID_REVOKED = 43;
+export const ID_READER_SAME = 44;
+
 const HASH_WRITE = '04c0218b3c6929c6638fa052827cc353c3e1eb3a432020f686e083aae900d6c4';
 const HASH_READER = '1fe7a77d2fca400ab2b506da2b5c7a0bc9ab21853ba6ad65c049915ff64dfabb';
 const HASH_REVOKED = '53970244b433599bbd3e20d18a8f567a43c61db7447cd0a92e8b1f8a4b0a98f3';
@@ -67,11 +83,11 @@ export async function seedKeys(): Promise<void> {
       'Seeded by test/seed.ts',
     ),
     env.DB.prepare(
-      `INSERT INTO api_keys (key_hash, kind, installation_pk, label, revoked_at) VALUES
-         (?1, 'write', 1, 'write key',        NULL),
-         (?2, 'read',  2, 'read key',         NULL),
-         (?3, 'write', 1, 'revoked key',      '2026-07-01T00:00:00.000Z'),
-         (?4, 'read',  1, 'read key, inst 1', NULL)`,
-    ).bind(HASH_WRITE, HASH_READER, HASH_REVOKED, HASH_READER_SAME),
+      `INSERT INTO api_keys (id, key_hash, kind, installation_pk, label, revoked_at) VALUES
+         (?1, ?5, 'write', 1, 'write key',        NULL),
+         (?2, ?6, 'read',  2, 'read key',         NULL),
+         (?3, ?7, 'write', 1, 'revoked key',      '2026-07-01T00:00:00.000Z'),
+         (?4, ?8, 'read',  1, 'read key, inst 1', NULL)`,
+    ).bind(ID_WRITE, ID_READER, ID_REVOKED, ID_READER_SAME, HASH_WRITE, HASH_READER, HASH_REVOKED, HASH_READER_SAME),
   ]);
 }

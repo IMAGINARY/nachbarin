@@ -16,8 +16,26 @@ export interface Installation {
   readonly instanceId: string;
 }
 
+/**
+ * The `api_keys` row this principal was resolved from.
+ *
+ * Deliberately not on {@link Installation}: an installation is a fact about the world, and which
+ * credential someone used to reach it is not part of what that credential grants. Both kinds carry
+ * it because both kinds are keys.
+ *
+ * A schema surrogate on a principal, which `d1-record-store.ts` argues against for the installation
+ * ("carries the business pair and deliberately not a schema surrogate"). That argument is about a
+ * thing that *has* a business key to carry instead. A key's natural identifier is a hash we made
+ * irreversible on purpose; this id is the only handle on it that exists — which is why the
+ * submission log records it, and why revoking one station's key stops being a re-key of the
+ * building. See `migrations/0004_*.sql`.
+ */
+interface Credential {
+  readonly keyId: number;
+}
+
 /** Deposits records into one installation. Write-only: it can never read. */
-export interface WritePrincipal extends Installation {
+export interface WritePrincipal extends Installation, Credential {
   readonly kind: 'write';
 }
 
@@ -32,7 +50,7 @@ export interface WritePrincipal extends Installation {
  * genuine full-corpus export is rare, irreversible operator work that belongs in `wrangler d1
  * execute` next to the rest of the hand-typed SQL, not behind a token that can leak.
  */
-export interface ReadPrincipal extends Installation {
+export interface ReadPrincipal extends Installation, Credential {
   readonly kind: 'read';
 }
 

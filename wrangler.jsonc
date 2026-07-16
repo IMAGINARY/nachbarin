@@ -25,6 +25,16 @@
     },
   ],
   /**
+   * The `record_submissions` retention sweep — see `src/retention.ts` for why this is a trigger and
+   * not a documented DELETE. Daily, and deliberately off the hour: :00 is when everyone else's cron
+   * fires too.
+   *
+   * Not a binding, so this needs no `cf-typegen` run: it does not appear in `Env`.
+   */
+  "triggers": {
+    "crons": ["17 3 * * *"],
+  },
+  /**
    * Smart Placement
    * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
    */

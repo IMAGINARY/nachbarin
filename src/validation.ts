@@ -130,8 +130,8 @@ function validateCreatedAt(value: unknown): Result<string, Failure> {
  * This is what `records.created_date` stores, and the exact time is then discarded rather than
  * persisted: a precise interaction timestamp is the field that could tie a visitor to their choices
  * given any other timed source (camera footage, a ticket scan), and `app_data` is not sensitive
- * enough to be worth pairing with one. The full timestamp goes to the metadata table instead, which
- * is read by different people under a different retention policy.
+ * enough to be worth pairing with one. The full timestamp goes to `record_submissions` instead —
+ * no endpoint reads it, and it is swept after 90 days.
  *
  * A slice, and not any kind of conversion. `createdAt` has been through {@link validateCreatedAt},
  * so it is RFC 3339 with an explicit offset and its first ten characters are a well-formed date —

@@ -9,6 +9,7 @@
  */
 
 import type { Principal, ReadPrincipal, WritePrincipal } from '../src/auth';
+import type { Provenance } from '../src/provenance';
 import type { Deps, InsertOutcome, KeyStore, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from '../src/storage';
 import { localDateOf } from '../src/validation';
 
@@ -25,8 +26,30 @@ export class FakeKeyStore implements KeyStore {
   }
 }
 
+/**
+ * One `record_submissions` row, as the fake records it. Camel-cased rather than snake_cased: this is
+ * not a wire shape, unlike {@link StoredRecord} — nothing ever reads this table over HTTP.
+ */
+export interface SubmissionRow extends Provenance {
+  readonly appId: string;
+  readonly instanceId: string;
+  readonly keyId: number;
+  readonly clientId: string;
+  /** Verbatim, offset preserved — the whole reason the table exists. */
+  readonly createdAt: string;
+  /** Full precision, UTC. */
+  readonly receivedAt: string;
+}
+
 export class FakeRecordStore implements RecordStore {
   readonly rows: StoredRecord[] = [];
+  /**
+   * The submission log, at the real grain: one row per *submitted* record, whether it was created or
+   * deduplicated. Modelled faithfully rather than canned, like the dedupe and cursor semantics
+   * below, because that grain is the whole design — a fake that only logged created records would
+   * let a 1:1 implementation pass every test here.
+   */
+  readonly submissions: SubmissionRow[] = [];
   /** Counts calls so tests can assert that storage was never reached. */
   insertCalls = 0;
   listCalls = 0;
@@ -35,11 +58,24 @@ export class FakeRecordStore implements RecordStore {
 
   private nextId = 1;
 
-  insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[]): Promise<InsertOutcome[]> {
+  insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[], provenance: Provenance): Promise<InsertOutcome[]> {
     this.insertCalls++;
     if (this.failWith !== null) return Promise.reject(this.failWith);
 
     const outcomes = records.map((record) => {
+      // Logged before the dedupe verdict, and unconditionally: a duplicate is a submission that
+      // happened, and seeing it is the point of the table. See `migrations/0004_*.sql`.
+      this.submissions.push({
+        ...provenance,
+        appId: principal.appId,
+        instanceId: principal.instanceId,
+        keyId: principal.keyId,
+        clientId: record.clientId,
+        // Neither is coarsened here, which is exactly what separates this table from `rows` below.
+        createdAt: record.createdAt,
+        receivedAt: receivedAt.toISOString(),
+      });
+
       // Dedupe is scoped to the installation -- the (app_id, instance_id) pair -- and never to
       // instance_id alone: that is `default` for most apps, so two apps at the same instance would
       // collide and the second one's records would be dropped as acknowledged duplicates.
@@ -89,10 +125,16 @@ export class FakeRecordStore implements RecordStore {
   }
 }
 
+/**
+ * `keyId` is distinct on every principal below, and deliberately not equal to anything else about
+ * them: the submission log records which key wrote a record, and a fixture where the ids happened to
+ * line up with an index or an installation would let a store that logged the wrong number pass.
+ */
 export const WRITE_A: WritePrincipal = {
   kind: 'write',
   appId: 'app-1',
   instanceId: 'instance-a',
+  keyId: 11,
 };
 
 /** Same app as A, different instance. */
@@ -100,6 +142,7 @@ export const WRITE_B: WritePrincipal = {
   kind: 'write',
   appId: 'app-1',
   instanceId: 'instance-b',
+  keyId: 22,
 };
 
 /**
@@ -111,13 +154,14 @@ export const WRITE_C: WritePrincipal = {
   kind: 'write',
   appId: 'app-2',
   instanceId: 'instance-a',
+  keyId: 33,
 };
 
 /** Reads installation A — the same installation {@link WRITE_A} writes to. */
-export const READ_A: ReadPrincipal = { kind: 'read', appId: 'app-1', instanceId: 'instance-a' };
+export const READ_A: ReadPrincipal = { kind: 'read', appId: 'app-1', instanceId: 'instance-a', keyId: 44 };
 
 /** Reads installation C. Its existence is what lets a spec prove one read key cannot see another's. */
-export const READ_C: ReadPrincipal = { kind: 'read', appId: 'app-2', instanceId: 'instance-a' };
+export const READ_C: ReadPrincipal = { kind: 'read', appId: 'app-2', instanceId: 'instance-a', keyId: 55 };
 
 export const KEY_A = 'key-write-a';
 export const KEY_B = 'key-write-b';
@@ -156,7 +200,10 @@ export function makeDeps(): TestDeps {
     .set(KEY_READ, READ_A)
     .set(KEY_READ_C, READ_C);
 
-  return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW };
+  // `newSubmissionId` draws from the same counter as `uuid()`, for the reason `Deps` documents: the
+  // real `crypto.randomUUID` would make a failure unreproducible. Every POST still gets a distinct
+  // id, since the counter only ever moves forward.
+  return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW, newSubmissionId: uuid };
 }
 
 let uuidCounter = 0;

@@ -21,7 +21,6 @@ export type ErrorCode =
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'internal_error'
-  | 'not_implemented'
   | 'unavailable';
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';

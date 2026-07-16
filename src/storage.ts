@@ -13,6 +13,7 @@
  */
 
 import type { Principal, ReadPrincipal, WritePrincipal } from './auth';
+import type { Provenance } from './provenance';
 
 export interface KeyStore {
   /**
@@ -44,7 +45,7 @@ export interface NewRecord {
    * The client's RFC 3339 string, verbatim — offset preserved rather than normalized to UTC.
    *
    * The records table coarsens this to a date (see `localDateOf`) and keeps no exact time. It is
-   * carried at full precision because the metadata table, which lands next, stores it as sent.
+   * carried at full precision because `record_submissions` stores it as sent, offset and all.
    */
   readonly createdAt: string;
   readonly engineVersion: string;
@@ -75,8 +76,9 @@ export type InsertOutcome = 'created' | 'duplicate';
  * Note what is not here: the exact times the client reported and the server observed. Records are
  * stored to a *date* and no finer. `app_data` is coarse enough to be uninteresting on its own, but a
  * precise timestamp is not — against any other timed source it identifies who made which choice, and
- * a date is all anyone downloading this data segments by anyway. The full timestamps live in the
- * metadata table, behind different privileges and a retention policy. See `migrations/0003_*.sql`.
+ * a date is all anyone downloading this data segments by anyway. The full timestamps live in
+ * `record_submissions`, behind different privileges and a 90-day retention. See
+ * `migrations/0003_*.sql` and `migrations/0004_*.sql`.
  */
 export interface StoredRecord {
   /** Monotonic. This is the incremental-download cursor. */
@@ -135,9 +137,27 @@ export interface RecordStore {
    * be dropped from its queue as acknowledged. The storage schema expresses the pair as a single
    * surrogate key, which makes `(installation, client_id)` unambiguous.
    *
+   * Implementations must also write one `record_submissions` row **per submitted record, whether it
+   * was created or deduplicated**, in the same transaction as the records themselves. Both halves of
+   * that matter:
+   *
+   * - *Per record, including duplicates*, because the log's grain is the submission and not the
+   *   record. A resubmission is the event worth seeing — a queue that has stopped draining, a batch
+   *   replayed from elsewhere — and it creates no record to hang a row off. See
+   *   `migrations/0004_*.sql`.
+   * - *In the same transaction*, because the alternative is a second round trip whose failure leaves
+   *   records committed and their provenance gone: the client retries, everything comes back
+   *   `duplicate`, and that submission is never described again. A log with holes in it has them
+   *   exactly when someone is reading it.
+   *
+   * That is why `provenance` is a parameter here rather than a separate store. The two writes are
+   * one transaction, and a seam between them would be a seam across a transaction boundary.
+   *
    * @param receivedAt a single server timestamp for the whole batch. The records table coarsens it
-   *   to `received_date` and keeps no exact time; it is passed at full precision because the
-   *   metadata table will store it as observed.
+   *   to `received_date` and keeps no exact time; it is passed at full precision because
+   *   `record_submissions` stores it as observed, and measures its retention from it.
+   * @param provenance what the edge knew about the request — one value for the whole batch, since a
+   *   batch is one request.
    * @returns outcomes positionally aligned with `records` — same length, same order.
    *
    * Must **throw** on transient failure rather than reporting a per-record outcome. Clients treat
@@ -145,7 +165,7 @@ export interface RecordStore {
    * reporting a transient failure as an outcome would silently discard data. Throwing surfaces as
    * 500/503 and the client retries the whole batch, which `client_id` makes safe.
    */
-  insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[]): Promise<InsertOutcome[]>;
+  insert(principal: WritePrincipal, receivedAt: Date, records: readonly NewRecord[], provenance: Provenance): Promise<InsertOutcome[]>;
 
   /**
    * Returns one page of `principal`'s installation's records, oldest first.
@@ -157,20 +177,6 @@ export interface RecordStore {
    * folded into it — the same shape `insert` already uses, and for the same reason.
    */
   list(principal: ReadPrincipal, query: ListQuery): Promise<ListPage>;
-}
-
-/**
- * An operation whose seam exists but whose adapter does not. Maps to 501.
- *
- * Nothing throws it today: both stores are implemented. It is kept, with its boundary mapping in
- * `app.ts` and its documented response in the spec, because the metadata store is the next seam to
- * land and will pass through exactly this state.
- */
-export class NotImplementedError extends Error {
-  constructor(operation: string) {
-    super(`${operation} is not implemented yet`);
-    this.name = 'NotImplementedError';
-  }
 }
 
 /**
@@ -190,4 +196,12 @@ export interface Deps {
   readonly recordStore: RecordStore;
   /** Injected so `received_date` is assertable in tests. */
   readonly now: () => Date;
+  /**
+   * Mints the UUID grouping one POST's records in the submission log.
+   *
+   * Injected for the same reason as {@link now}, and `test/fakes.ts` states it: a real
+   * `crypto.randomUUID` would make a failure unreproducible. It sits here rather than inside
+   * `provenanceOf` so that function stays pure and total.
+   */
+  readonly newSubmissionId: () => string;
 }

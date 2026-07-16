@@ -8,6 +8,7 @@
 import type { ReadPrincipal, WritePrincipal } from './auth';
 import { MAX_REQUEST_BODY_BYTES, MAX_RESPONSE_BYTES } from './config';
 import { errorResponse, isJsonContentType, jsonResponse, readCappedText } from './http';
+import { provenanceOf } from './provenance';
 import type { Deps, InsertOutcome, NewRecord, StoredRecord } from './storage';
 import { validateReadQuery, validateRecord, validateWriteEnvelope } from './validation';
 
@@ -116,7 +117,17 @@ export async function handlePostRecords(request: Request, principal: WritePrinci
   if (accepted.length > 0) {
     // A single timestamp for the whole batch. Workers freezes the clock during synchronous
     // execution anyway, so per-record calls would return identical values regardless.
-    const outcomes: InsertOutcome[] = await deps.recordStore.insert(principal, deps.now(), accepted);
+    //
+    // Provenance is read here because this is the last place the `Request` exists — `Deps` is built
+    // from `env` alone and has no request to offer. One value for the batch, since a batch is one
+    // request, and one submission id for the same reason.
+    //
+    // Inside this guard on purpose: records that failed validation get no log row. Logging them
+    // would put storage before validation, which is the ordering the whole handler is built around,
+    // and it would let anyone with a key write rows here by sending garbage. A client fuzzing the
+    // endpoint is what Workers observability is for; this table is for records that exist.
+    const provenance = provenanceOf(request, deps.newSubmissionId());
+    const outcomes: InsertOutcome[] = await deps.recordStore.insert(principal, deps.now(), accepted, provenance);
     outcomes.forEach((outcome, i) => {
       results[acceptedIndices[i]].status = outcome;
     });
