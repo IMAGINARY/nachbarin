@@ -15,6 +15,7 @@
 import { env } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { ReadPrincipal, WritePrincipal } from '../src/auth';
+import { MAX_SUBMISSIONS_PER_RECORD } from '../src/config';
 import { D1RecordStore } from '../src/d1-record-store';
 import type { Provenance } from '../src/provenance';
 import type { ListQuery, NewRecord } from '../src/storage';
@@ -490,6 +491,134 @@ describe('the submission log', () => {
     await env.DB.prepare('DROP TABLE record_submissions').run();
 
     await expect(store().insert(WRITE, RECEIVED_AT, [record()], provenance())).rejects.toThrow();
+  });
+});
+
+/**
+ * The cap on rows per record. Real D1 rather than a fake, because every claim here is about the SQL:
+ * that a `WHERE` on a subquery COUNT really does stop at the bound, that it stops per record rather
+ * than per installation, and -- the one that matters most -- that stopping is silent to the client
+ * rather than an error.
+ *
+ * `MAX_SUBMISSIONS_PER_RECORD` is imported rather than hardcoded here, unlike the golden hashes in
+ * `d1-key-store.spec.ts`. The number is not the claim: these tests say "the cap is enforced, and
+ * enforced at whatever it is set to", so tuning the constant must not be a test edit.
+ */
+describe('the submission-per-record cap', () => {
+  const countFor = async (clientId: string): Promise<number> => {
+    const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM record_submissions WHERE client_id = ?1')
+      .bind(clientId)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  };
+
+  /** One over the cap, so every test here crosses it rather than merely reaching it. */
+  const OVER_CAP = MAX_SUBMISSIONS_PER_RECORD + 1;
+
+  it('stops storing rows for a client_id once the cap is reached', async () => {
+    const one = record();
+
+    for (let i = 0; i < OVER_CAP; i++) {
+      await store().insert(WRITE, RECEIVED_AT, [one], provenance({ submissionId: uuid() }));
+    }
+
+    expect(await countFor(one.clientId)).toBe(MAX_SUBMISSIONS_PER_RECORD);
+  });
+
+  // The test that stops the cap from becoming a rejection. A capped submission must be reported
+  // exactly as an uncapped duplicate is: `InsertOutcome` has no variant for "we declined to log
+  // this", and inventing one would tell a client something it must not act on. The client's queue
+  // behaviour cannot depend on how full this table is.
+  it('is invisible to the client -- a capped submission is still `duplicate`', async () => {
+    const one = record();
+
+    const outcomes: string[] = [];
+    for (let i = 0; i < OVER_CAP; i++) {
+      const [outcome] = await store().insert(WRITE, RECEIVED_AT, [one], provenance({ submissionId: uuid() }));
+      outcomes.push(outcome);
+    }
+
+    expect(outcomes[0]).toBe('created');
+    expect(outcomes.slice(1)).toEqual(Array(OVER_CAP - 1).fill('duplicate'));
+  });
+
+  // Statements run sequentially inside the batch's transaction, so the ones past the cap see the
+  // rows the earlier ones just wrote. If this ever fails, the COUNT is being evaluated against a
+  // snapshot from the start of the transaction and the cap does not hold within a single POST --
+  // which is exactly the shape a retry storm arrives in.
+  it('holds within a single batch that repeats one client_id', async () => {
+    const one = record();
+
+    await store().insert(WRITE, RECEIVED_AT, Array(OVER_CAP).fill(one), provenance());
+
+    expect(await countFor(one.clientId)).toBe(MAX_SUBMISSIONS_PER_RECORD);
+  });
+
+  it('is scoped to the record, not the installation', async () => {
+    const capped = record();
+    for (let i = 0; i < OVER_CAP; i++) {
+      await store().insert(WRITE, RECEIVED_AT, [capped], provenance({ submissionId: uuid() }));
+    }
+
+    // A different record at the same installation is untouched by its neighbour's storm.
+    const other = record();
+    await store().insert(WRITE, RECEIVED_AT, [other], provenance({ submissionId: uuid() }));
+
+    expect(await countFor(other.clientId)).toBe(1);
+  });
+
+  // The dedupe scoping argument, applied to the cap: `client_id` is not globally unique, so a cap
+  // that keyed on it alone would let one installation's storm silence another installation's log.
+  it('is scoped to the installation, so one storm cannot silence another', async () => {
+    const one = record();
+    for (let i = 0; i < OVER_CAP; i++) {
+      await store().insert(WRITE, RECEIVED_AT, [one], provenance({ submissionId: uuid() }));
+    }
+
+    await store().insert(WRITE_OTHER, RECEIVED_AT, [one], provenance({ submissionId: uuid() }));
+
+    const { results } = await env.DB.prepare('SELECT installation_pk FROM record_submissions WHERE client_id = ?1 AND installation_pk = 2')
+      .bind(one.clientId)
+      .all();
+    expect(results).toHaveLength(1);
+  });
+
+  // "Both, or neither" survives the cap. Reaching the cap implies the record already exists, so a
+  // capped submission is always a no-op duplicate -- a *created* record can never lose its
+  // provenance to this. If this fails, the cap has started dropping rows the corpus depends on.
+  it('never withholds a row from a submission that creates a record', async () => {
+    const capped = record();
+    for (let i = 0; i < OVER_CAP; i++) {
+      await store().insert(WRITE, RECEIVED_AT, [capped], provenance({ submissionId: uuid() }));
+    }
+
+    const fresh = record();
+    await store().insert(WRITE, RECEIVED_AT, [capped, fresh], provenance({ submissionId: SUBMISSION_ID }));
+
+    const { results } = await env.DB.prepare('SELECT client_id FROM records').all<{ client_id: string }>();
+    const stored = results.map((row) => row.client_id);
+    for (const clientId of stored) {
+      expect(await countFor(clientId)).toBeGreaterThan(0);
+    }
+    expect(stored).toContain(fresh.clientId);
+  });
+
+  // The rows kept are the *first*, and their received_at values are what make the storm readable:
+  // ten timestamps 10s apart is a hot retry loop, ten spread over a day is a flake. Keeping the
+  // newest instead would need a DELETE per insert and would answer the same question no better.
+  it('keeps the earliest rows, with their received_at intact, so the retry rate stays readable', async () => {
+    const one = record();
+
+    for (let i = 0; i < OVER_CAP; i++) {
+      const at = new Date(RECEIVED_AT.getTime() + i * 10_000);
+      await store().insert(WRITE, at, [one], provenance({ submissionId: uuid() }));
+    }
+
+    const logged = await submissions();
+    expect(logged).toHaveLength(MAX_SUBMISSIONS_PER_RECORD);
+    expect(logged.map((row) => row.received_at)).toEqual(
+      Array.from({ length: MAX_SUBMISSIONS_PER_RECORD }, (_, i) => new Date(RECEIVED_AT.getTime() + i * 10_000).toISOString()),
+    );
   });
 });
 

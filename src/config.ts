@@ -5,10 +5,11 @@
  * client authors code against, so changing one is a deliberate, reviewable act rather than a
  * per-deployment knob.
  *
- * {@link METADATA_RETENTION_DAYS} is the one exception to that description, and it is here anyway.
- * It is invisible to clients — it governs a table they cannot read — so it is a privacy policy
- * rather than a contract. But "a deliberate, reviewable act" is the *more* true of it, not less, and
- * a second constants file holding one number would be the worse answer.
+ * {@link METADATA_RETENTION_DAYS} and {@link MAX_SUBMISSIONS_PER_RECORD} are the exceptions to that
+ * description, and they are here anyway. Both are invisible to clients — they govern a table clients
+ * cannot read, and neither can change a response — so they are policy rather than contract. But "a
+ * deliberate, reviewable act" is the *more* true of them, not less, and a second constants file
+ * holding two numbers would be the worse answer.
  */
 
 /** Maximum records accepted in a single write batch. Larger batches are rejected whole (400). */
@@ -55,3 +56,56 @@ export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
  * Enforced by the `scheduled` handler in `index.ts`, not by anyone remembering. See `retention.ts`.
  */
 export const METADATA_RETENTION_DAYS = 90;
+
+/**
+ * How many `record_submissions` rows are kept for one (installation, client_id).
+ *
+ * The log's grain is one row per submitted record per POST, duplicates included, so a client stuck in
+ * a retry loop writes rows in proportion to the loop rather than to the data. This bounds that.
+ * Enforced in the log's INSERT in `d1-record-store.ts` and deliberately not by a CHECK — read the
+ * comment there before moving it.
+ *
+ * ## 0004's arithmetic is against the wrong ceiling
+ *
+ * Its header reasons throughout against "D1's 10 GB per-database limit" and concludes that the storm
+ * it describes takes "~36 days to fill the database from empty". 10 GB is the *Workers Paid* limit.
+ * On the free plan a database is capped at **500 MB**, and an account at 5 GB — so every figure there
+ * was twenty times more forgiving than the truth. Migrations are history and cannot be edited, and
+ * this cap needs no schema change that could carry a correction, so the correction lives here.
+ *
+ * ## Storage is not the failure that arrives first
+ *
+ * The free plan allows **100k rows written per day**, and Cloudflare counts an index write as a row
+ * written. Each row here costs about three — the table plus its two indexes — so 0004's storm (100
+ * records every 10s) exhausts the day's quota in roughly three hours. D1 then rejects every query,
+ * for *every* installation, until the quota resets at 00:00 UTC.
+ *
+ * That is the mild failure: it heals itself at midnight. A full database does not. It stops ingestion
+ * until the sweep catches up — up to {@link METADATA_RETENTION_DAYS} — or until someone notices and
+ * deletes rows by hand, and because these rows share the record insert's transaction it stops
+ * ingestion for installations that did nothing wrong. This cap makes the first a non-event and the
+ * second unreachable for storm traffic: capped at ten, that same storm stores 1,000 rows a day rather
+ * than 864k, and writes 3,000 against the quota rather than exhausting it.
+ *
+ * ## Why ten, and why flat
+ *
+ * Ten keeps the first ~100 seconds of a 10s retry loop, which is enough to read the retry *rate* off
+ * the `received_at` values rather than merely the fact that a loop happened.
+ *
+ * Flat rather than per-day because the exhibits reset nightly onto a read-only disk overlay, taking
+ * the send queue with them: a client_id cannot be resubmitted across days, so a per-record storm is
+ * already bounded to a day and a per-day cap would buy nothing but a wider index. Nor is the storm's
+ * duration lost with it — after each reset the exhibit rolls *fresh* client_ids, so a fault that
+ * persists appears as a new cohort of capped-out records every day, and duration stays legible at the
+ * installation even though it is gone from the record. If the exhibits ever stop resetting nightly,
+ * this has to become per-day; `d1-record-store.ts` says what that costs.
+ *
+ * ## What this does not bound
+ *
+ * Only *repeated* client_ids. A client inventing a fresh one every time is writing records, and
+ * `records` has no sweep at all — it is the product. A busy exhibit is thousands of records a day
+ * (0004's figure) at up to {@link MAX_APP_DATA_BYTES} each, against the same 500 MB, so on a
+ * long-lived installation `records` reaches the ceiling first and this cap does nothing about it. The
+ * answer there is the paid plan or an export-and-prune, and it is not a cap.
+ */
+export const MAX_SUBMISSIONS_PER_RECORD = 10;

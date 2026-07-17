@@ -14,6 +14,7 @@
  */
 
 import type { ReadPrincipal, WritePrincipal } from './auth';
+import { MAX_SUBMISSIONS_PER_RECORD } from './config';
 import type { Provenance } from './provenance';
 import type { InsertOutcome, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from './storage';
 import { localDateOf } from './validation';
@@ -54,16 +55,52 @@ const INSERT_SQL = `
  * commits the records and loses their provenance forever. See `migrations/0004_*.sql`.
  *
  * The installation subquery is the same pattern, and the same reasoning, as {@link INSERT_SQL}.
+ *
+ * ## The cap, which is the `WHERE` and not a CHECK
+ *
+ * `?16` is {@link MAX_SUBMISSIONS_PER_RECORD}, and its comment holds the argument for why a bound
+ * exists at all. What belongs here is why it is shaped like this:
+ *
+ *   * **It cannot be a CHECK, and must not be.** 0004's header forbids any CHECK here that could
+ *     fire, because these rows share the record insert's transaction: a CHECK that fires is not a
+ *     rejected log row, it is a rolled-back batch, a 500, a retry, another 500, forever. A `WHERE`
+ *     that excludes inserts zero rows and commits, so the hazard does not apply to it. (SQLite would
+ *     refuse the CHECK regardless — they cannot contain subqueries.)
+ *   * **It costs no extra query and no extra round trip.** Folded into the statement that was already
+ *     being sent, so this is still one statement per record per table inside the one `batch()` the
+ *     comment in `insert` describes. A preceding SELECT would have been a second round trip outside
+ *     this transaction — the same mistake `INSERT_SQL` avoids by deduplicating with ON CONFLICT.
+ *   * **The cap bounds its own cost.** The COUNT is served by `record_submissions_by_record`
+ *     `(installation_pk, client_id)`, and with the cap in force that index can never hold more than
+ *     `?16` entries to scan for one record. Uncapped, the same COUNT would be unbounded. On the happy
+ *     path — a client_id nobody has sent before — it is an index seek that finds nothing.
+ *   * **It can only ever drop a duplicate's row, never a created record's.** Reaching the cap means
+ *     the client_id was submitted `?16` times already, which means the record exists, which means the
+ *     statement above it is a no-op. So 0004's "both, or neither" holds for every record that gets
+ *     stored. The one exception is worth naming because it is silent: log rows deliberately outlive
+ *     their records (no FK, 0004 §"no record_id"), so an operator deleting a record for vandalism or
+ *     erasure, and the exhibit then resubmitting that client_id while the cap's worth of its log rows
+ *     survives, recreates the record with no provenance row. The nightly reset means the delete and
+ *     the storm have to fall on the same day for this to be reachable at all.
+ *
+ * `VALUES` cannot carry a `WHERE`, hence `SELECT`. A `SELECT` with no `FROM` is a single row, or no
+ * rows when the `WHERE` is false. A missing installation still fails loudly rather than skipping
+ * quietly: the scalar subquery is NULL, `installation_pk = NULL` matches nothing so the count is 0
+ * and the cap passes, and the row that reaches the table trips NOT NULL exactly as it does today.
  */
 const INSERT_SUBMISSION_SQL = `
   INSERT INTO record_submissions (
     submission_id, installation_pk, key_id, client_id, created_at, received_at,
     client_ip, user_agent, cf_country, cf_city, cf_asn, cf_as_organization, cf_colo, cf_timezone
   )
-  VALUES (
+  SELECT
     ?1, (SELECT id FROM installations WHERE app_id = ?2 AND instance_id = ?3), ?4, ?5, ?6, ?7,
     ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
-  )
+  WHERE (
+    SELECT COUNT(*) FROM record_submissions
+    WHERE installation_pk = (SELECT id FROM installations WHERE app_id = ?2 AND instance_id = ?3)
+      AND client_id = ?5
+  ) < ?16
 `;
 
 /**
@@ -126,12 +163,12 @@ export class D1RecordStore implements RecordStore {
     const insertRecord = this.db.prepare(INSERT_SQL);
     const insertSubmission = this.db.prepare(INSERT_SUBMISSION_SQL);
 
-    // One statement per record per table, never a multi-row VALUES: at 8 and 15 parameters each, a
-    // full batch of 100 would bind 800 and 1500, and D1 caps a query at 100 bound parameters. That
-    // cap is per *statement* within a batch, not per batch, so 200 statements of 8 and 15 have vast
+    // One statement per record per table, never a multi-row VALUES: at 8 and 16 parameters each, a
+    // full batch of 100 would bind 800 and 1600, and D1 caps a query at 100 bound parameters. That
+    // cap is per *statement* within a batch, not per batch, so 200 statements of 8 and 16 have vast
     // headroom while one statement of 800 does not. `batch` sends them in one round trip regardless.
     //
-    // The rejected alternative is a multi-row VALUES chunked to fit — ⌊100/15⌋ = 6 records per
+    // The rejected alternative is a multi-row VALUES chunked to fit — ⌊100/16⌋ = 6 records per
     // statement. Rejected because the chunk size is then a silent function of the column count: add
     // one column here later and the chunking quietly changes, with nothing to notice.
     //
@@ -147,7 +184,9 @@ export class D1RecordStore implements RecordStore {
     //
     // `batch` is also a transaction, so a fault rolls the whole batch back and the client retries it
     // whole — which `client_id` makes safe. That is also what keeps a record and its provenance from
-    // ever existing apart: both, or neither.
+    // ever existing apart: both, or neither. The cap in {@link INSERT_SUBMISSION_SQL} does not weaken
+    // that — it can only ever withhold a row from a submission that stored nothing — and the single
+    // exception is named there.
     const results = await this.db.batch([
       ...records.map((record) =>
         insertRecord.bind(
@@ -161,9 +200,11 @@ export class D1RecordStore implements RecordStore {
           record.appDataJson,
         ),
       ),
-      // One row per submitted record, whether or not the statement above stored it. A record that
-      // comes back `duplicate` still arrived, from somewhere, at some time — and that is precisely
-      // the event worth having.
+      // One row per submitted record, whether or not the statement above stored it, until this
+      // client_id has {@link MAX_SUBMISSIONS_PER_RECORD} of them. A record that comes back
+      // `duplicate` still arrived, from somewhere, at some time — and that is precisely the event
+      // worth having, right up until the point where having it for the ten-thousandth time says
+      // nothing the tenth did not.
       ...records.map((record) =>
         insertSubmission.bind(
           provenance.submissionId,
@@ -184,6 +225,10 @@ export class D1RecordStore implements RecordStore {
           provenance.asOrganization,
           provenance.colo,
           provenance.timezone,
+          // Bound rather than interpolated into the SQL above. It is a trusted integer, so this is
+          // hygiene rather than safety — but it keeps the statement a constant string, and 16
+          // parameters is nothing against the 100-per-statement cap described above.
+          MAX_SUBMISSIONS_PER_RECORD,
         ),
       ),
     ]);
