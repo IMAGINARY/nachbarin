@@ -48,7 +48,7 @@ export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /**
  * How long a `record_submissions` row lives, measured from `received_at`.
  *
- * This number is what buys the date-only design in `migrations/0003_create_records.sql`. That table
+ * This number is what buys the date-only design of `records` (see `docs/database.md`). That table
  * gives up exact timestamps on the argument that they survive somewhere narrower and shorter-lived;
  * this is the "shorter-lived". Raising it weakens that argument, and raising it far enough makes the
  * schema a permanent archive of precisely what it was built not to keep.
@@ -65,20 +65,13 @@ export const METADATA_RETENTION_DAYS = 90;
  * Enforced in the log's INSERT in `d1-record-store.ts` and deliberately not by a CHECK — read the
  * comment there before moving it.
  *
- * ## 0004's arithmetic is against the wrong ceiling
+ * ## What an uncapped storm costs
  *
- * Its header reasons throughout against "D1's 10 GB per-database limit" and concludes that the storm
- * it describes takes "~36 days to fill the database from empty". 10 GB is the *Workers Paid* limit.
- * On the free plan a database is capped at **500 MB**, and an account at 5 GB — so every figure there
- * was twenty times more forgiving than the truth. Migrations are history and cannot be edited, and
- * this cap needs no schema change that could carry a correction, so the correction lives here.
- *
- * ## Storage is not the failure that arrives first
- *
- * The free plan allows **100k rows written per day**, and Cloudflare counts an index write as a row
- * written. Each row here costs about three — the table plus its two indexes — so 0004's storm (100
- * records every 10s) exhausts the day's quota in roughly three hours. D1 then rejects every query,
- * for *every* installation, until the quota resets at 00:00 UTC.
+ * The binding ceilings are the free plan's: 500 MB per database and — reached first — **100k rows
+ * written per day**, with an index write counting as a row written. Each row here costs about three
+ * (the table plus its two indexes), so an uncapped storm of 100 records every 10s (~864k rows/day)
+ * exhausts the day's quota in roughly three hours. D1 then rejects every query, for *every*
+ * installation, until the quota resets at 00:00 UTC.
  *
  * That is the mild failure: it heals itself at midnight. A full database does not. It stops ingestion
  * until the sweep catches up — up to {@link METADATA_RETENTION_DAYS} — or until someone notices and
@@ -104,7 +97,7 @@ export const METADATA_RETENTION_DAYS = 90;
  *
  * Only *repeated* client_ids. A client inventing a fresh one every time is writing records, and
  * `records` has no sweep at all — it is the product. A busy exhibit is thousands of records a day
- * (0004's figure) at up to {@link MAX_APP_DATA_BYTES} each, against the same 500 MB, so on a
+ * at up to {@link MAX_APP_DATA_BYTES} each, against the same 500 MB, so on a
  * long-lived installation `records` reaches the ceiling first and this cap does nothing about it. The
  * answer there is the paid plan or an export-and-prune, and it is not a cap.
  */

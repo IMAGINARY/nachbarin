@@ -5,9 +5,8 @@
  *
  * This adapter is where records get coarsened *and* where the precision is kept — the two are one
  * transaction, and that is the whole point. `records` takes only the dates of `createdAt` and
- * `receivedAt` (`migrations/0003_create_records.sql` argues why); `record_submissions` takes them
- * whole, along with what the edge knew about the request, behind different privileges and a 90-day
- * sweep (`migrations/0004_log_record_submissions.sql`).
+ * `receivedAt`; `record_submissions` takes them whole, along with what the edge knew about the
+ * request, behind different privileges and a 90-day sweep. `docs/database.md` holds the design.
  *
  * Splitting those into two adapters would split them across transactions, which is the one thing
  * neither table can afford. See {@link RecordStore.insert}.
@@ -52,7 +51,7 @@ const INSERT_SQL = `
  * That independence is load-bearing. Keying by `records.id` would need it back from an
  * `ON CONFLICT DO NOTHING` that returns nothing on conflict, forcing either a stale `meta.last_row_id`
  * (wrong, silently) or a RETURNING in a second `batch()` — outside this transaction, where a failure
- * commits the records and loses their provenance forever. See `migrations/0004_*.sql`.
+ * commits the records and loses their provenance forever.
  *
  * The installation subquery is the same pattern, and the same reasoning, as {@link INSERT_SQL}.
  *
@@ -61,8 +60,8 @@ const INSERT_SQL = `
  * `?16` is {@link MAX_SUBMISSIONS_PER_RECORD}, and its comment holds the argument for why a bound
  * exists at all. What belongs here is why it is shaped like this:
  *
- *   * **It cannot be a CHECK, and must not be.** 0004's header forbids any CHECK here that could
- *     fire, because these rows share the record insert's transaction: a CHECK that fires is not a
+ *   * **It cannot be a CHECK, and must not be.** No reachable CHECK is allowed on this table,
+ *     because these rows share the record insert's transaction: a CHECK that fires is not a
  *     rejected log row, it is a rolled-back batch, a 500, a retry, another 500, forever. A `WHERE`
  *     that excludes inserts zero rows and commits, so the hazard does not apply to it. (SQLite would
  *     refuse the CHECK regardless — they cannot contain subqueries.)
@@ -76,9 +75,9 @@ const INSERT_SQL = `
  *     path — a client_id nobody has sent before — it is an index seek that finds nothing.
  *   * **It can only ever drop a duplicate's row, never a created record's.** Reaching the cap means
  *     the client_id was submitted `?16` times already, which means the record exists, which means the
- *     statement above it is a no-op. So 0004's "both, or neither" holds for every record that gets
+ *     statement above it is a no-op. So "both, or neither" holds for every record that gets
  *     stored. The one exception is worth naming because it is silent: log rows deliberately outlive
- *     their records (no FK, 0004 §"no record_id"), so an operator deleting a record for vandalism or
+ *     their records (no FK to `records` — see `docs/database.md`), so an operator deleting a record for vandalism or
  *     erasure, and the exhibit then resubmitting that client_id while the cap's worth of its log rows
  *     survives, recreates the record with no provenance row. The nightly reset means the delete and
  *     the storm have to fall on the same day for this to be reachable at all.
@@ -111,8 +110,8 @@ const INSERT_SUBMISSION_SQL = `
  *
  * No join back to `installations`, even though `app_id` and `instance_id` are on the wire. Every row
  * this returns belongs to the principal's installation by construction, so the strings are already
- * in hand — 0001 anticipated "a join on every read" as the cost of the surrogate key, and scoping by
- * the principal is what avoids paying it.
+ * in hand — scoping by the principal is what avoids the join on every read that the surrogate key
+ * would otherwise cost.
  *
  * `(?4 IS NULL OR engine_version = ?4)` is "no filter, or this filter". Note the NULL row case falls
  * out correctly for free: `content_version = 'x'` is NULL — not true — for a row whose

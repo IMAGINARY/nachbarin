@@ -64,7 +64,7 @@ export class FakeRecordStore implements RecordStore {
 
     const outcomes = records.map((record) => {
       // Logged before the dedupe verdict, and unconditionally: a duplicate is a submission that
-      // happened, and seeing it is the point of the table. See `migrations/0004_*.sql`.
+      // happened, and seeing it is the point of the table. See `docs/database.md`.
       this.submissions.push({
         ...provenance,
         appId: principal.appId,

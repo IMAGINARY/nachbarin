@@ -77,8 +77,7 @@ export type InsertOutcome = 'created' | 'duplicate';
  * stored to a *date* and no finer. `app_data` is coarse enough to be uninteresting on its own, but a
  * precise timestamp is not — against any other timed source it identifies who made which choice, and
  * a date is all anyone downloading this data segments by anyway. The full timestamps live in
- * `record_submissions`, behind different privileges and a 90-day retention. See
- * `migrations/0003_*.sql` and `migrations/0004_*.sql`.
+ * `record_submissions`, behind different privileges and a 90-day retention. See `docs/database.md`.
  */
 export interface StoredRecord {
   /** Monotonic. This is the incremental-download cursor. */
@@ -143,8 +142,7 @@ export interface RecordStore {
    *
    * - *Per record, including duplicates*, because the log's grain is the submission and not the
    *   record. A resubmission is the event worth seeing — a queue that has stopped draining, a batch
-   *   replayed from elsewhere — and it creates no record to hang a row off. See
-   *   `migrations/0004_*.sql`.
+   *   replayed from elsewhere — and it creates no record to hang a row off. See `docs/database.md`.
    * - *In the same transaction*, because the alternative is a second round trip whose failure leaves
    *   records committed and their provenance gone: the client retries, everything comes back
    *   `duplicate`, and that submission is never described again. A log with holes in it has them

@@ -1,21 +1,15 @@
 /**
  * The `record_submissions` sweep.
  *
- * Driven by a cron trigger (`wrangler.jsonc`) through the `scheduled` handler in `index.ts`, rather
- * than by a `DELETE` in the README next to minting a key and exporting the corpus.
+ * Driven by a cron trigger (`wrangler.jsonc`) through the `scheduled` handler in `index.ts` — never
+ * by a hand-typed `DELETE`. The README's rule that operator work is typed on purpose is for rare,
+ * irreversible acts; a daily purge is the opposite: routine, expected, and worth nothing at all if
+ * it depends on somebody remembering.
  *
- * That precedent deliberately does not transfer, and it is worth saying why, because the README is
- * otherwise emphatic that this kind of work is typed by hand. What it argues for is that *rare,
- * irreversible acts should be deliberate* — reviewed at the moment someone types them, because there
- * is no undo. A daily purge is the opposite on every count: routine, expected, and worth nothing at
- * all if it depends on somebody remembering. (0003 makes the same move about AUTOINCREMENT: the
- * argument is real, and it is about a different situation.)
- *
- * The stakes are also asymmetric. `migrations/0003_create_records.sql`, README, `storage.ts` and the
- * OpenAPI spec all rest the date-only design on the exact timestamps living somewhere with "its own
- * retention". A retention nobody runs is not a weaker version of that promise — it makes the
- * schema a permanent, precise-timestamp archive, which is the one outcome the whole design exists to
- * prevent. A promise kept by a human remembering is not a promise.
+ * The stakes: the date-only design of `records` rests on the exact timestamps living somewhere with
+ * a retention (see `docs/database.md`). A retention nobody runs is not a weaker version of that
+ * promise — it makes the schema a permanent, precise-timestamp archive, which is the one outcome the
+ * whole design exists to prevent. A promise kept by a human remembering is not a promise.
  */
 
 import { METADATA_RETENTION_DAYS } from './config';
@@ -24,8 +18,8 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * `received_at` is fixed-width RFC 3339 UTC (`toISOString()`, pinned by a CHECK), so a string
- * comparison is a chronological one — the property 0001 noted when it chose the format. No
- * `strftime`, no date parsing, and the `record_submissions_by_received_at` index serves it directly.
+ * comparison is a chronological one. No `strftime`, no date parsing, and the
+ * `record_submissions_by_received_at` index serves it directly.
  *
  * Strictly `<`: a row exactly on the boundary is exactly `METADATA_RETENTION_DAYS` old and has not
  * yet outlived the window. The direction is arbitrary by a millisecond and pinned by a test, because
@@ -33,8 +27,8 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * neither should be settled by accident.
  *
  * Unbounded, rather than a `LIMIT`ed loop, and that is measured rather than assumed: 200k rows sweep
- * in ~420ms on the local engine, so even the retry-storm day 0004's header describes (~864k rows) is
- * a couple of seconds. A steady state is a single day's rows. If this ever does start timing out,
+ * in ~420ms on the local engine, so even an uncapped retry-storm day (~864k rows; see
+ * `MAX_SUBMISSIONS_PER_RECORD` in `config.ts`) is a couple of seconds. A steady state is a single day's rows. If this ever does start timing out,
  * the failure is silent by nature -- a sweep that stops looks exactly like one that runs -- so it
  * would want a bounded loop and an alarm, not a bigger timeout.
  */

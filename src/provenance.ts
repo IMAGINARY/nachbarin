@@ -10,8 +10,8 @@
  * throw, no validation verdict. That is not laziness about input handling — it is the requirement.
  * These values are written in the same transaction as the records they describe, so an extractor
  * that could reject a request would be an extractor that could take ingestion down, and it would do
- * so exactly when something unusual is happening. See `migrations/0004_*.sql`: a forensics table
- * must not refuse to record something because it looks wrong.
+ * so exactly when something unusual is happening. See `docs/database.md`: a forensics table must
+ * not refuse to record something because it looks wrong.
  *
  * The clamping here is what makes the schema's CHECKs unreachable rather than merely unlikely. Each
  * one restates a bound applied below, so it can only fire if this module and that table have drifted
