@@ -14,6 +14,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **The submission log is per-_submission_, not per-record.** `record_submissions` gets one row per submitted record per POST, **including duplicates** — the grain is the whole point, since a resubmission stores no record and would otherwise be invisible (a queue that stopped draining, a replayed batch, a resend with mutated `app_data`). Per-record metadata is a view over it: the earliest row per `(installation_pk, client_id)` is the creating submission. It has no FK to `records`, deliberately — read the header of `migrations/0004_log_record_submissions.sql` before adding one.
 
+## The world it runs in
+
+Background rather than rules — but most of the rules below are downstream of it.
+
+**Why a network service exists at all.** Exhibit machines run behind a read-only disk overlay: everything written locally is discarded when the machine powers off, which normally happens nightly. A record that has not left the building by closing time does not exist in the morning. And we generally cannot reach _into_ a museum's network to collect anything, whereas an exhibit making outbound HTTPS calls to a public API is something nearly every venue already permits. So the exhibit pushes and this service catches — that asymmetry, not scale, is the reason this is an API. Future hosts may not lose their state (an iPad could hold a queue for weeks), but the protocol assumes the nightly-loss case, and several decisions below rest on it.
+
+**The first app is a game; the service is deliberately general.** What is being built first is storage for one exhibit game's player choices. The expectation is surveys, telemetry, usage statistics and whatever the next exhibit needs — different apps, different venues, different payload shapes. That expectation is why `app_data` is opaque and why nothing in the schema knows what a "choice" is. A request to make this service understand one app's payload is a request to make it useless to the next one.
+
+**Writers are kiosks; readers are people we know.** A write key lives in a closed kiosk browser on a museum floor: unattended, physically fixed, with nobody present to re-enter a credential or read an error. A read key lives with us or a trusted partner — say a researcher pulling their own venue's data from outside the museum. In the normal case every party is trusted and every request is expected. The auth, the scoping and the submission log are for the abnormal case; they do not imply we expect an adversary, and they are equally not licence to loosen anything, since "trusted" describes who _should_ hold a key rather than who does.
+
+**Traffic is very low, and stays low even when it grows.** The first exhibit is a 3–5 minute game that submits at most once per player, and only on consent — a station produces on the order of a dozen records an hour, during opening hours, at venues that mostly keep normal ones. A travelling exhibition adds venues, not throughput. The service should certainly carry several apps across several museums submitting faster than that, but "faster" here stays negligible by internet standards. Hence no rate limiter, no queue, no cache; the batch and page limits in `src/config.ts` bound a _single_ request's memory and are not about load.
+
+**It runs on the Cloudflare Workers free plan and should keep fitting in it.** A paid plan is available if we genuinely need it, but nothing here should require one, and a change that only fits under paid limits needs a conversation before it needs code. The binding limits, verified against Cloudflare's docs on 2026-07-17 — they move these, so re-check rather than trusting this table:
+
+| Limit                  | Free       | Paid            |
+| ---------------------- | ---------- | --------------- |
+| Worker requests        | 100k/day   | unlimited       |
+| Worker CPU per request | 10 ms      | 5 min           |
+| D1 rows written        | 100k/day   | 50M/mo included |
+| D1 rows read           | 5M/day     | 25B/mo included |
+| D1 database size       | **500 MB** | 10 GB           |
+| D1 storage per account | 5 GB       | 1 TB            |
+
+D1 counts an index write as a row written, so the row quota — not storage — is what a fault breaks first. `MAX_SUBMISSIONS_PER_RECORD` in `src/config.ts` is the answer to that and its header does the arithmetic. The 100-bound-parameter cap on a query is the same on both plans, so it is not a free-plan concession and never goes away.
+
+**GDPR is a design input, not a step at the end.** The data lives in D1 in the EU, and handling it lawfully is an intention designed toward rather than bolted on. Three things carry it, each detailed below: `app_data` is coarse by construction and the app obtains consent where consent is required; `records` keeps dates and never times; and everything precise or identifying lives in `record_submissions`, which no key of any kind can read and which is swept at `METADATA_RETENTION_DAYS` (90). The principle is need-to-know. A researcher with a read key is a legitimate reader of records and is _not_ a legitimate reader of IP addresses and second-resolution timestamps — so no read key can reach them. That data exists for an administrator diagnosing something abnormal, and it expires.
+
+**The two key kinds are two different accidents, not a privilege ladder.** `read` is not a superset of `write`. A write key that could also read would turn every kiosk — physically accessible, running an app anyone can inspect — into a download point for its venue's visitor data. A read key that could write would let a mistyped export or a buggy analysis script mutate the corpus, which has no undo and, for clients that reset nightly, no upstream copy left to re-send. Neither kind is safe as the other, which is why there are two and why widening either is a product decision rather than a convenience.
+
 ## Commands
 
 - `npm run dev` (or `npm start`) — local dev server via `wrangler dev` (http://localhost:8787)
