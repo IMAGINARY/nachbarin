@@ -71,9 +71,8 @@ describe('purgeExpiredSubmissions', () => {
     expect(await remaining()).toEqual([onBoundary]);
   });
 
-  // The highest-stakes assertion in the file. `records` is the product: it holds no exact times, it
-  // is not retention-limited, and a sweep that reached it would silently destroy the corpus the whole
-  // service exists to collect — quietly, on a schedule, at 3am.
+  // `records` is the product: it holds no exact times and is not retention-limited, so a sweep that
+  // reached it would silently destroy the corpus the service exists to collect.
   it('never touches records', async () => {
     await env.DB.prepare(
       `INSERT INTO records (installation_pk, client_id, created_date, received_date, engine_version, app_data)

@@ -48,12 +48,11 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
  * under two spellings would defeat `UNIQUE (installation_pk, client_id)` and store twice. Normalized
  * here, and CHECKed again in `migrations/0003_*.sql` so the invariant holds from both ends.
  *
- * The nil UUID is rejected, and that rejection is load-bearing rather than pedantic. `client_id`
- * is the idempotency key: a client that emits the nil UUID for every record — the classic
- * uninitialized-variable bug — would store exactly one record, and every record after it would
- * come back `duplicate`. This protocol defines `duplicate` as success, so the client would drop
- * each one from its queue. That is silent, total, unrecoverable data loss that looks from the
- * outside like a perfectly healthy pipeline.
+ * The nil UUID is rejected because `client_id` is the idempotency key: a client emitting it for
+ * every record — the classic uninitialized-variable bug — would store exactly one record and get
+ * `duplicate` for every one after it. This protocol defines `duplicate` as success, so the client
+ * would drop each from its queue: silent, total, unrecoverable data loss that looks healthy from
+ * outside.
  */
 function validateClientId(value: unknown): Result<string, Failure> {
   if (typeof value !== 'string') return fail('invalid_field', 'client_id must be a string');
@@ -133,12 +132,11 @@ function validateCreatedAt(value: unknown): Result<string, Failure> {
  * enough to be worth pairing with one. The full timestamp goes to `record_submissions` instead —
  * no endpoint reads it, and it is swept after 90 days.
  *
- * A slice, and not any kind of conversion. `createdAt` has been through {@link validateCreatedAt},
- * so it is RFC 3339 with an explicit offset and its first ten characters are a well-formed date —
- * and because the offset is preserved rather than normalized to UTC, that date is *already* the
- * exhibit's local one. No timezone table, no offset arithmetic, and in particular no `Date`: parsing
- * to a `Date` would resolve the instant to UTC and hand back the wrong day for half the planet every
- * evening, which is precisely the bug this repo refuses to reintroduce.
+ * A slice, not a conversion. `createdAt` has been through {@link validateCreatedAt}, so its first
+ * ten characters are a well-formed date — and because the offset is preserved rather than
+ * normalized to UTC, that date is *already* the exhibit's local one. In particular no `Date`:
+ * parsing to a `Date` resolves the instant to UTC and hands back the wrong day for half the planet
+ * every evening.
  *
  * The one soft spot is a client reporting `Z` instead of its true offset — then this is the UTC date,
  * which can land a day early for the few hours around local midnight. Museums are shut then. If one
@@ -221,10 +219,10 @@ export function validateRecord(value: unknown): Result<NewRecord, Failure> {
     return fail('payload_too_large', `app_data is ${String(appDataBytes)} bytes; the limit is ${String(MAX_APP_DATA_BYTES)}`);
   }
 
-  // The one concession to inspecting app_data, and it is a storage-portability constraint rather
-  // than an interpretation of the content: Postgres `jsonb` cannot hold a NUL character inside a string, so
-  // such a record would pass validation and then fail at insert time as an untraceable 500. We
-  // already hold the serialized form for the size check, so catching it here costs nothing.
+  // The one concession to inspecting app_data, and a storage-portability constraint rather than an
+  // interpretation of the content: Postgres `jsonb` cannot hold a NUL character inside a string, so
+  // such a record would pass validation and then fail at insert time as an untraceable 500. The
+  // serialized form is already in hand for the size check, so catching it here costs nothing.
   if (appDataJson.includes('\\u0000')) {
     return fail('invalid_field', 'app_data must not contain the NUL character');
   }
@@ -302,15 +300,12 @@ function optionalFilter(raw: string | null, field: string, maxLength: number): R
  * Produces only what the caller may choose. The installation is not among it: that comes from the
  * key, which is why this stays a pure function of the URL and never sees a principal.
  *
- * Unknown and repeated parameters are rejected rather than ignored. This looks pedantic and is
- * not: `?after=184002` would leave `after_id` at its default, silently restarting the cursor at
- * zero, and the client would re-download and re-process the entire corpus while `has_more`
- * reported that everything was fine. Repeated parameters are the same failure wearing a different
- * hat, since `URLSearchParams.get` returns the first and discards the rest.
- *
- * The usual argument for leniency — forward compatibility — does not apply. That protects new
- * clients talking to old servers; there is exactly one Worker version live at a time, and the API
- * is already versioned in its path.
+ * Unknown and repeated parameters are rejected rather than ignored: a typo'd `?after=184002` would
+ * leave `after_id` at its default and silently re-download the entire corpus, and a repeated
+ * parameter is the same failure through `URLSearchParams.get`, which returns the first value and
+ * discards the rest. Leniency for forward compatibility protects new clients talking to old
+ * servers; there is exactly one Worker version live at a time, and the API is versioned in its
+ * path.
  */
 export function validateReadQuery(params: URLSearchParams): Result<ListQuery, Failure> {
   const extra = [...new Set(params.keys())].filter((key) => !QUERY_KEYS.includes(key));

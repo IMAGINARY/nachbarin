@@ -41,51 +41,44 @@ const INSERT_SQL = `
 /**
  * The provenance of one submitted record: the full timestamps and what the edge knew.
  *
- * Note the absences, which are the design and not an oversight. There is **no ON CONFLICT** and no
- * unique key to conflict against: one row per submission of a client_id, so a retry writes a second
- * row and that repetition is the signal. And there is **no record_id** — this row is keyed by
- * `(installation_pk, client_id)`, the same natural key `records` deduplicates on, which is what makes
- * this statement independent of the insert above. It does not need that statement's outcome, its id,
- * or even its ordering: it is simply another statement in the same transaction.
- *
- * That independence is load-bearing. Keying by `records.id` would need it back from an
- * `ON CONFLICT DO NOTHING` that returns nothing on conflict, forcing either a stale `meta.last_row_id`
- * (wrong, silently) or a RETURNING in a second `batch()` — outside this transaction, where a failure
- * commits the records and loses their provenance forever.
+ * Two absences are the design. **No ON CONFLICT** and no unique key to conflict against: one row
+ * per submission of a client_id, so a retry writes a second row and the repetition is the signal.
+ * **No record_id**: the row is keyed by `(installation_pk, client_id)`, the same natural key
+ * `records` deduplicates on, which keeps this statement independent of the insert above. Keying by
+ * `records.id` would need it back from an `ON CONFLICT DO NOTHING` that returns nothing on
+ * conflict, forcing either a stale `meta.last_row_id` (wrong, silently) or a RETURNING in a second
+ * `batch()` — outside this transaction, where a failure commits the records and loses their
+ * provenance forever.
  *
  * The installation subquery is the same pattern, and the same reasoning, as {@link INSERT_SQL}.
  *
- * ## The cap, which is the `WHERE` and not a CHECK
+ * ## The cap: a `WHERE`, never a CHECK
  *
- * `?16` is {@link MAX_SUBMISSIONS_PER_RECORD}, and its comment holds the argument for why a bound
- * exists at all. What belongs here is why it is shaped like this:
+ * `?16` is {@link MAX_SUBMISSIONS_PER_RECORD}; its comment holds why a bound exists at all. The
+ * shape:
  *
- *   * **It cannot be a CHECK, and must not be.** No reachable CHECK is allowed on this table,
- *     because these rows share the record insert's transaction: a CHECK that fires is not a
- *     rejected log row, it is a rolled-back batch, a 500, a retry, another 500, forever. A `WHERE`
- *     that excludes inserts zero rows and commits, so the hazard does not apply to it. (SQLite would
- *     refuse the CHECK regardless — they cannot contain subqueries.)
- *   * **It costs no extra query and no extra round trip.** Folded into the statement that was already
- *     being sent, so this is still one statement per record per table inside the one `batch()` the
- *     comment in `insert` describes. A preceding SELECT would have been a second round trip outside
- *     this transaction — the same mistake `INSERT_SQL` avoids by deduplicating with ON CONFLICT.
+ *   * **It cannot be a CHECK, and must not be.** These rows share the record insert's transaction,
+ *     so a CHECK that fires is not a rejected log row — it is a rolled-back batch, a 500, a retry,
+ *     another 500, forever. A `WHERE` that excludes inserts zero rows and commits. (SQLite would
+ *     refuse the CHECK regardless: no subqueries.)
+ *   * **No extra query, no extra round trip.** Folded into the statement that was already being
+ *     sent — still one statement per record per table inside the one `batch()`.
  *   * **The cap bounds its own cost.** The COUNT is served by `record_submissions_by_record`
- *     `(installation_pk, client_id)`, and with the cap in force that index can never hold more than
- *     `?16` entries to scan for one record. Uncapped, the same COUNT would be unbounded. On the happy
- *     path — a client_id nobody has sent before — it is an index seek that finds nothing.
+ *     `(installation_pk, client_id)`, which with the cap in force holds at most `?16` entries per
+ *     record; on the happy path — a client_id nobody has sent before — it is an index seek that
+ *     finds nothing.
  *   * **It can only ever drop a duplicate's row, never a created record's.** Reaching the cap means
- *     the client_id was submitted `?16` times already, which means the record exists, which means the
- *     statement above it is a no-op. So "both, or neither" holds for every record that gets
- *     stored. The one exception is worth naming because it is silent: log rows deliberately outlive
- *     their records (no FK to `records` — see `docs/database.md`), so an operator deleting a record for vandalism or
- *     erasure, and the exhibit then resubmitting that client_id while the cap's worth of its log rows
- *     survives, recreates the record with no provenance row. The nightly reset means the delete and
- *     the storm have to fall on the same day for this to be reachable at all.
+ *     the record exists, so the statement above it is a no-op and "both, or neither" holds for
+ *     every stored record. One silent exception: log rows outlive their records (no FK to `records`
+ *     — see `docs/database.md`), so deleting a record and then getting its client_id resubmitted
+ *     while the cap's worth of log rows survives recreates the record with no provenance row. The
+ *     nightly reset means the delete and the storm must fall on the same day for this to be
+ *     reachable at all.
  *
- * `VALUES` cannot carry a `WHERE`, hence `SELECT`. A `SELECT` with no `FROM` is a single row, or no
- * rows when the `WHERE` is false. A missing installation still fails loudly rather than skipping
- * quietly: the scalar subquery is NULL, `installation_pk = NULL` matches nothing so the count is 0
- * and the cap passes, and the row that reaches the table trips NOT NULL exactly as it does today.
+ * `VALUES` cannot carry a `WHERE`, hence `SELECT` (no `FROM`: one row, or none when the `WHERE` is
+ * false). A missing installation still fails loudly rather than skipping quietly: the scalar
+ * subquery is NULL, the COUNT is 0, and the row trips NOT NULL exactly as it does in
+ * {@link INSERT_SQL}.
  */
 const INSERT_SUBMISSION_SQL = `
   INSERT INTO record_submissions (
@@ -162,24 +155,20 @@ export class D1RecordStore implements RecordStore {
     const insertRecord = this.db.prepare(INSERT_SQL);
     const insertSubmission = this.db.prepare(INSERT_SUBMISSION_SQL);
 
-    // One statement per record per table, never a multi-row VALUES: at 8 and 16 parameters each, a
-    // full batch of 100 would bind 800 and 1600, and D1 caps a query at 100 bound parameters. That
-    // cap is per *statement* within a batch, not per batch, so 200 statements of 8 and 16 have vast
-    // headroom while one statement of 800 does not. `batch` sends them in one round trip regardless.
+    // One statement per record per table, never a multi-row VALUES: D1 caps a query at 100 bound
+    // parameters, per *statement* within a batch rather than per batch, so 200 statements of 8 and
+    // 16 parameters have vast headroom while one of 800 does not. (Chunking a multi-row VALUES to
+    // fit would make the chunk size a silent function of the column count.) `batch` sends them in
+    // one round trip regardless.
     //
-    // The rejected alternative is a multi-row VALUES chunked to fit — ⌊100/16⌋ = 6 records per
-    // statement. Rejected because the chunk size is then a silent function of the column count: add
-    // one column here later and the chunking quietly changes, with nothing to notice.
+    // The log statements are appended, deliberately not interleaved: two runs of N keep the record
+    // outcomes at their own indices, where `[rec, sub, rec, sub, …]` would make `results[2i]` a
+    // decoding step that goes silently wrong the first time someone reorders the array.
     //
-    // Appended, deliberately not interleaved. `[rec, sub, rec, sub, …]` would make the outcome at
-    // `results[2i]` a decoding step every future reader has to reconstruct, and silently wrong the
-    // first time someone reorders the array. Two runs of N keep the record outcomes at their own
-    // indices.
-    //
-    // Not wrapped in a try/catch, for the reason `d1-key-store.ts` sets out at length: a failure here
-    // must reach the error boundary in `app.ts` as a 500. `InsertOutcome` has no failure variant
-    // precisely so that this is the only way out. Reporting a transient fault as a per-record outcome
-    // would have the client treat it as acknowledged and drop the record from its retry queue.
+    // No try/catch, for the reason set out in `d1-key-store.ts`: a failure here must reach the
+    // error boundary in `app.ts` as a 500. `InsertOutcome` has no failure variant precisely so that
+    // this is the only way out — reporting a transient fault as a per-record outcome would have the
+    // client treat it as acknowledged and drop the record from its retry queue.
     //
     // `batch` is also a transaction, so a fault rolls the whole batch back and the client retries it
     // whole — which `client_id` makes safe. That is also what keeps a record and its provenance from
@@ -201,9 +190,8 @@ export class D1RecordStore implements RecordStore {
       ),
       // One row per submitted record, whether or not the statement above stored it, until this
       // client_id has {@link MAX_SUBMISSIONS_PER_RECORD} of them. A record that comes back
-      // `duplicate` still arrived, from somewhere, at some time — and that is precisely the event
-      // worth having, right up until the point where having it for the ten-thousandth time says
-      // nothing the tenth did not.
+      // `duplicate` still arrived, from somewhere, at some time — the event this table exists to
+      // see.
       ...records.map((record) =>
         insertSubmission.bind(
           provenance.submissionId,
@@ -224,24 +212,22 @@ export class D1RecordStore implements RecordStore {
           provenance.asOrganization,
           provenance.colo,
           provenance.timezone,
-          // Bound rather than interpolated into the SQL above. It is a trusted integer, so this is
-          // hygiene rather than safety — but it keeps the statement a constant string, and 16
-          // parameters is nothing against the 100-per-statement cap described above.
+          // Bound rather than interpolated: a trusted integer, so hygiene rather than safety — it
+          // keeps the statement a constant string.
           MAX_SUBMISSIONS_PER_RECORD,
         ),
       ),
     ]);
 
     // `batch` returns one result per statement in order, and the record statements are the first
-    // `records.length` of them — which is exactly the positional alignment the contract promises the
-    // caller. `handlers.ts` indexes this against the submitted records and would silently mismatch if
-    // it were filtered or reordered. Indexed rather than sliced-and-mapped so the alignment is stated
-    // at the point it is relied on.
+    // `records.length` of them — the positional alignment the contract promises. `handlers.ts`
+    // indexes this against the submitted records and would silently mismatch if it were filtered or
+    // reordered.
     //
     // `changes` is the whole verdict: `ON CONFLICT DO NOTHING` inserts nothing on a conflict, so 0
-    // means the (installation, client_id) was already there. This also gives the right answer for a
-    // batch that legitimately carries one client_id twice — statements run sequentially inside the
-    // transaction, so the second sees the first and reports `duplicate`.
+    // means the (installation, client_id) was already there. A batch that legitimately carries one
+    // client_id twice also comes out right — statements run sequentially inside the transaction, so
+    // the second sees the first and reports `duplicate`.
     return records.map((_, i) => (results[i].meta.changes === 1 ? 'created' : 'duplicate'));
   }
 

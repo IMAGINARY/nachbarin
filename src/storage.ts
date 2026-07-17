@@ -179,7 +179,9 @@ export interface RecordStore {
 
 /**
  * A transient storage failure. Maps to 503 + Retry-After, telling the client to retry the batch.
- * Defined here now so handlers and their tests pin the behaviour before an adapter exists.
+ * Neither D1 adapter throws it — a failed D1 call could equally be a typo'd query, so asserting
+ * transience is not theirs to do (see `d1-key-store.ts`) — but the mapping is pinned by tests for
+ * any store that can.
  */
 export class StorageUnavailableError extends Error {
   constructor(message = 'storage is temporarily unavailable') {

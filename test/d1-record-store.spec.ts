@@ -670,8 +670,7 @@ describe('the submission log schema', () => {
   // The half that does. Affinity will not touch a value that is not a well-formed integer literal:
   // 'AS3320' stays TEXT, a float stays REAL, and an int64 overflow silently becomes REAL. Each sits
   // in the column looking like an ASN while comparing equal to no integer at all, so `WHERE cf_asn =
-  // 3320` finds nothing and says nothing. typeof() is the only construct that sees this -- the same
-  // shape of argument 0001 makes about VARCHAR(100) not enforcing 100.
+  // 3320` finds nothing and says nothing. typeof() is the only construct that sees this.
   it.each([
     ['text that is not a number', 'AS3320'],
     ['a float', 3320.5],
@@ -689,8 +688,9 @@ describe('the submission log schema', () => {
     await expect(insert.bind(uuid(), uuid(), '2026-07-15T12:00:00Z').run()).rejects.toThrow();
   });
 
-  // Not UNIQUE, deliberately -- see the index comment in 0004. If this ever starts throwing, the log
-  // has silently become a 1:1 table and every retry is being rolled back into a 500.
+  // Not UNIQUE, deliberately -- the repetition is the content (see `docs/database.md`). If this ever
+  // starts throwing, the log has silently become a 1:1 table and every retry is being rolled back
+  // into a 500.
   it('allows one client_id to be logged twice for an installation', async () => {
     const insert = insertLog('created_at, received_at', `'2026-07-15T14:03:22+02:00', '${RECEIVED_AT_ISO}'`);
     const clientId = uuid();

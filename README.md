@@ -136,7 +136,7 @@ npx wrangler d1 execute nachbarin --remote --json --command \
 
 `app_data` is JSON in a text column, so SQLite's JSON functions work on it directly — `json_extract(r.app_data, '$.nodes')` and friends. A `CHECK (json_valid(app_data))` on the table means an export can never die partway through on a row that will not parse.
 
-This is rare work that belongs next to the rest of the hand-typed SQL on this page. A token that spanned installations would be a standing one: it lives on someone's laptop, in a CI variable, in a chat log, and reads every museum's data for as long as it exists. Running the query needs database access at the moment you need it, and leaves nothing behind.
+A token that spanned installations would be a standing credential — on a laptop, in a CI variable, in a chat log — reading every museum's data for as long as it exists. Running the query needs database access at the moment you need it, and leaves nothing behind.
 
 ### Revoking a key
 

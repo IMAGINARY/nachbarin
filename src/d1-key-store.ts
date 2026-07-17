@@ -44,8 +44,7 @@ const encoder = new TextEncoder();
  * in the tests pins that agreement, because the failure mode is a silent, permanent 401 that is by
  * design indistinguishable from revocation.
  *
- * WebCrypto rather than `node:crypto`: it is native to the runtime, and `nodejs_compat` being on
- * for other reasons is not a reason to reach for a shim.
+ * WebCrypto rather than `node:crypto`: native to the runtime, no shim needed.
  */
 async function sha256Hex(key: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(key));
@@ -58,14 +57,12 @@ export class D1KeyStore implements KeyStore {
   async resolve(presentedKey: string): Promise<Principal | null> {
     const hash = await sha256Hex(presentedKey);
 
-    // Deliberately not wrapped in a try/catch. A D1 failure must propagate: `null` here means 401,
-    // and answering 401 to a database outage would tell every client at once that its credential is
-    // bad — the one conclusion it must not draw, and one that could make a well-behaved client stop
-    // retrying and discard queued records. Propagating surfaces as 500 at the error boundary in
-    // `app.ts`, which is honest. `StorageUnavailableError` (503 + Retry-After) is deliberately not
-    // used: it asserts the failure is transient, and a rejected `prepare` could equally be a typo in
-    // the SQL above. `.first()` returns null for zero rows and throws on error, so the two cases
-    // arrive through different channels and no error-message sniffing is needed.
+    // No try/catch: a D1 failure must propagate to the 500 boundary in `app.ts`. `null` here means
+    // 401, which tells a client its credential is bad — the one conclusion an outage must not
+    // produce, since a well-behaved client may then stop retrying and discard queued records. Not
+    // `StorageUnavailableError` (503) either: that asserts the failure is transient, and a rejected
+    // `prepare` could equally be a typo in the SQL above. `.first()` returns null for zero rows and
+    // throws on error, so the two cases cannot be confused.
     const row = await this.db.prepare(RESOLVE_SQL).bind(hash).first<KeyRow>();
 
     // No row: unknown or revoked. The query cannot tell us which, by design, and neither can the

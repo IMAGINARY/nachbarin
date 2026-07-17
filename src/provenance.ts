@@ -7,11 +7,10 @@
  * the datacenter that took it. It all lands in `record_submissions`.
  *
  * **This module is total and cannot fail.** Every field degrades to null; there is no `Result`, no
- * throw, no validation verdict. That is not laziness about input handling — it is the requirement.
- * These values are written in the same transaction as the records they describe, so an extractor
- * that could reject a request would be an extractor that could take ingestion down, and it would do
- * so exactly when something unusual is happening. See `docs/database.md`: a forensics table must
- * not refuse to record something because it looks wrong.
+ * throw, no validation verdict. These values are written in the same transaction as the records
+ * they describe, so an extractor that could reject a request could take ingestion down — and would,
+ * exactly when something unusual is happening. See `docs/database.md`: a forensics table must not
+ * refuse to record something because it looks wrong.
  *
  * The clamping here is what makes the schema's CHECKs unreachable rather than merely unlikely. Each
  * one restates a bound applied below, so it can only fire if this module and that table have drifted
@@ -19,11 +18,10 @@
  * turns an unexpected value from a null column into a permanent 500.
  *
  * On the typing: `request.cf` is `CfProperties | undefined`, and `CfProperties` extends
- * `Record<string, unknown>`, so every field reads as `unknown` rather than its declared type. That
- * is the correct treatment of an edge-supplied value and it is free — TypeScript forces the
- * narrowing below rather than letting a declared `string` be trusted. Do not parameterize `Request`
- * to recover the precise types: the declaration describes what Cloudflare sends on a good day, and
- * on a good day this module has nothing to do.
+ * `Record<string, unknown>`, so every field reads as `unknown` rather than its declared type — the
+ * correct treatment of an edge-supplied value. Do not parameterize `Request` to recover the precise
+ * types: they describe what Cloudflare sends on a good day, and on a good day this module has
+ * nothing to do.
  */
 
 /** Mirrors the nullable columns of `record_submissions`. */
@@ -84,11 +82,8 @@ export function provenanceOf(request: Request, submissionId: string): Provenance
 
   // `undefined` under `vitest-pool-workers` unless a test passes `cf` to the Request, and every
   // field within it is independently optional in production. Nothing below may assume any of it.
-  //
-  // Note `wrangler dev` is the opposite trap: it fetches *real* properties from Cloudflare, so a
-  // local `npm run dev` writes your own city and ISP into your local database. Useful for seeing
-  // this work; not a fixture, and not a reason to believe any given field will be there in
-  // production.
+  // (`wrangler dev` is the opposite trap: it fetches *real* properties, so a local `npm run dev`
+  // writes your own city and ISP into your local database — not evidence any field is reliable.)
   const cf = request.cf;
 
   return {
@@ -105,19 +100,17 @@ export function provenanceOf(request: Request, submissionId: string): Provenance
 }
 
 /**
- * Alpha-2, or `T1` for Tor. Clamped by *rejection* rather than truncation — the one exception here.
+ * The two-letter country code Cloudflare resolved from the IP — ISO 3166-1 alpha-2, plus
+ * pseudo-codes like `T1` for Tor — or null. The one field clamped by *rejection* rather than
+ * truncation: truncating would turn 'DEU' into 'DE', inventing a fact from a value we evidently
+ * did not understand, and a wrong country is worse than no country.
  *
- * Truncating would turn 'DEU' into 'DE', inventing a fact from a value we evidently did not
- * understand. A wrong country is worse than no country: nobody chases a null, and everybody trusts
- * a code.
- *
- * Matched against ASCII rather than measured with `.length`, because `cf_country` is the only bound
- * in the schema that is an equality (`length(cf_country) = 2`) and equality is the unsafe direction.
- * `.length` counts UTF-16 code units and SQLite's `length()` counts characters, so a single astral
- * character — `'𝕏'.length === 2`, `length('𝕏') = 1` — would pass a `.length === 2` guard and then
- * fail the CHECK, which on this table is a wedged client rather than a dropped column. Every other
- * field clamps with `slice`, which can only ever *reduce* the count, so this asymmetry is the reason
- * only this one needs the stricter test.
+ * Matched against ASCII rather than measured with `.length`, because `cf_country`'s CHECK is the
+ * schema's only *equality* bound (`length(cf_country) = 2`) and `.length` counts UTF-16 code units
+ * where SQLite's `length()` counts characters: a single astral character — `'𝕏'.length === 2`,
+ * `length('𝕏') = 1` — would pass a `.length === 2` guard and then fail the CHECK, which on this
+ * table wedges the client rather than dropping a column. Every other field clamps with `slice`,
+ * which can only ever reduce the count.
  */
 const COUNTRY_RE = /^[A-Za-z0-9]{2}$/;
 
@@ -128,15 +121,12 @@ function country(value: unknown): string | null {
 /**
  * An ASN: an integer in the 32-bit unsigned range, or null.
  *
- * The upper bound is not decoration. `Number.isInteger` is true of `1e21`, which is a perfectly good
- * JS integer and far outside SQLite's 64-bit range — so it would land in the INTEGER column as REAL
- * and fail the schema's `typeof(cf_asn) = 'integer'` CHECK, which on this table means a rolled-back
- * batch rather than a null column. `Number.isSafeInteger` would also close that (2^53 < 2^63), but
- * 32 bits is the honest bound: ASNs are 32-bit (RFC 6793), so anything above it was never an ASN.
- *
- * The lower bound and the integer test cover the other half of what affinity will not convert: a
- * float stays REAL, and text that is not a well-formed integer literal stays TEXT. Either sits in
- * the column comparing equal to no ASN ever after.
+ * The upper bound matters: `Number.isInteger` is true of `1e21`, which is far outside SQLite's
+ * 64-bit range, so it would land in the INTEGER column as REAL and fail the schema's
+ * `typeof(cf_asn) = 'integer'` CHECK — on this table a rolled-back batch, not a null column. ASNs
+ * are 32-bit (RFC 6793), so anything above that was never an ASN. The integer test and lower bound
+ * cover what affinity will not convert: a float stays REAL, text stays TEXT, and either compares
+ * equal to no ASN ever after.
  */
 const MAX_ASN = 0xffffffff;
 

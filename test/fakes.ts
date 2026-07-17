@@ -5,7 +5,7 @@
  * in the Worker bundle.
  *
  * `FakeRecordStore` implements real dedupe and cursor semantics rather than returning canned
- * values, so the handler tests exercise genuine behaviour while the database is still unbuilt.
+ * values, so the handler tests exercise genuine behaviour without a database.
  */
 
 import type { Principal, ReadPrincipal, WritePrincipal } from '../src/auth';

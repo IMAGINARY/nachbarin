@@ -153,7 +153,7 @@ function readClientId(raw: unknown): string | null {
  *               [&engine_version=…][&content_version=…]
  * Authorization: Bearer <read-key>
  *
- * { "records": [ …full stored records, including id and received_at… ],
+ * { "records": [ …full stored records, including id and received_date… ],
  *   "next_after_id": 185002,
  *   "has_more": true }
  * ```
