@@ -1,22 +1,10 @@
-import { fileURLToPath } from 'node:url';
-import { defineWorkersConfig, readD1Migrations } from '@cloudflare/vitest-pool-workers/config';
+import { defineConfig } from 'vitest/config';
 
-export default defineWorkersConfig({
+// Orchestrator only. Two projects with different runtimes, one per config file so each keeps its own
+// plugins/pool: `test/` runs in the Workers pool (see test/vitest.config.mts), `scripts/` runs in plain
+// Node (see scripts/vitest.config.mts). `npx vitest run` executes both.
+export default defineConfig({
   test: {
-    // Runs once per test file, before that file's tests — see test/apply-migrations.ts.
-    setupFiles: ['./test/apply-migrations.ts'],
-    poolOptions: {
-      // A function because the migrations are read from disk, which only Node can do: the setup
-      // file runs inside the Workers runtime, which has no filesystem. They are read here and
-      // handed across as a test-only binding.
-      workers: async () => ({
-        wrangler: { configPath: './wrangler.jsonc' },
-        miniflare: {
-          bindings: {
-            TEST_MIGRATIONS: await readD1Migrations(fileURLToPath(new URL('migrations', import.meta.url))),
-          },
-        },
-      }),
-    },
+    projects: ['./test/vitest.config.mts', './scripts/vitest.config.mts'],
   },
 });

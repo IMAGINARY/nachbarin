@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // Node-typed, not Workers-typed: these run under `node`, not in the Worker. This replaces the root
+    // `types`; the generated Env declarations come back via `include` for any src/ file we import.
+    "types": ["node"],
+    // Scripts run natively via `node` type-stripping, which resolves imports by their real extension.
+    // So cross-file imports spell out `.ts` (e.g. `../src/config.ts`); this lets tsc accept them.
+    // Allowed because the inherited `noEmit` holds — nothing is compiled, only type-checked.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["./**/*.ts", "../worker-configuration.d.ts"],
+  "exclude": []
+}

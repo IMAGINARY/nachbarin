@@ -2,14 +2,17 @@
   "name": "nachbarin",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
+    "admin": "node scripts/cli.ts",
     "test": "vitest",
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply nachbarin --local",
     "lint": "eslint .",
+    "typecheck:scripts": "tsc --noEmit -p scripts/tsconfig.json",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

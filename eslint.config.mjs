@@ -11,10 +11,10 @@ export default defineConfig([
     extends: [js.configs.recommended, tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       parserOptions: {
-        // The root tsconfig only includes src/; these config files are in no tsconfig, so
-        // the project service needs to infer a default project for them.
+        // src/, test/ and scripts/ each have a tsconfig; the project service resolves their files
+        // automatically. These config files belong to no tsconfig, so they need a default project.
         projectService: {
-          allowDefaultProject: ['*.mjs', '*.mts'],
+          allowDefaultProject: ['*.mjs', '*.mts', 'test/vitest.config.mts', 'scripts/vitest.config.mts'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
