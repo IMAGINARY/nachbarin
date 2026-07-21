@@ -119,7 +119,14 @@ async function main(argv: string[]): Promise<void> {
   }
 
   const ctx: CommandContext = { args: inv.rest, remote: inv.remote };
-  await resolution.run(ctx);
+  // Single error boundary: handlers throw on any failure (bad flags, no matching installation, declined
+  // confirmation) and the message is reported here, so no handler duplicates stderr/exit-code wiring.
+  try {
+    await resolution.run(ctx);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  }
 }
 
 // Run only when invoked directly (`node scripts/cli.ts …`), not when imported by a test.
