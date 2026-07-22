@@ -14,7 +14,7 @@ export default defineConfig([
         // src/, test/ and scripts/ each have a tsconfig; the project service resolves their files
         // automatically. These config files belong to no tsconfig, so they need a default project.
         projectService: {
-          allowDefaultProject: ['*.mjs', '*.mts', 'test/vitest.config.mts', 'scripts/vitest.config.mts'],
+          allowDefaultProject: ['*.mjs', '*.mts', 'test/vitest.config.mts', 'scripts/vitest.config.mts', 'scripts/e2e/vitest.config.mts'],
         },
         tsconfigRootDir: import.meta.dirname,
       },

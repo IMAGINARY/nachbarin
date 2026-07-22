@@ -50,6 +50,7 @@ D1 counts an index write as a row written, so the row quota — not storage — 
 - `npm test` — run the vitest suite in watch mode
 - `npx vitest run` — run all tests once (no watch)
 - `npx vitest run test/validation.spec.ts` — run a single test file; add `-t "<name>"` to filter by test name
+- `npm run test:e2e` — end-to-end tests of the operator CLI (`scripts/e2e/`): spawns the real `scripts/cli.ts` against a throwaway migrated local D1 in a temp `--persist-to` dir (threaded via `NACHBARIN_D1_PERSIST_TO`, see `scripts/lib/wrangler.ts`), so it never touches `.wrangler/state`. Slow — a wrangler spawn per call — and deliberately not part of `npm test`
 - `npm run lint` — eslint (type-aware, covers `src/` and `test/`)
 - `npm run format` — prettier `--write` over the repo; `npm run format:check` to verify without writing. Formatting is not part of `npm run lint`, so it is only enforced by the IDE-on-save setting and by running these.
 - `npx tsc --noEmit` — type-check `src/`; `npx tsc --noEmit -p test/tsconfig.json` for `test/`, and `npm run typecheck:scripts` (`-p scripts/tsconfig.json`) for the operator CLI (both excluded from the root config)

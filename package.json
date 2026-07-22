@@ -9,6 +9,7 @@
     "start": "wrangler dev",
     "admin": "node scripts/cli.ts",
     "test": "vitest",
+    "test:e2e": "vitest run --config scripts/e2e/vitest.config.mts",
     "cf-typegen": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply nachbarin --local",
     "lint": "eslint .",

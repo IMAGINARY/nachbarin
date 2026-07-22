@@ -6,6 +6,10 @@
  * the repo's deliberate lack of a db:migrate:remote script.
  *
  * Split into pure argv-building and JSON-extraction (unit-tested) plus a thin spawn.
+ *
+ * `NACHBARIN_D1_PERSIST_TO` points wrangler's local state at a different directory (`--persist-to`).
+ * It exists for the e2e suite (scripts/e2e/), which runs the real CLI against a throwaway migrated
+ * database in a temp dir instead of `.wrangler/state`. Local-only: `--remote` ignores it.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -20,6 +24,8 @@ export interface D1ExecuteOptions {
   remote?: boolean;
   /** Ask wrangler for `--json` output (used by read/query commands). */
   json?: boolean;
+  /** Local-state directory for `--persist-to` (the e2e seam — see the header). Ignored with `remote`. */
+  persistTo?: string;
 }
 
 /**
@@ -27,8 +33,9 @@ export interface D1ExecuteOptions {
  * spawning. `--local` is emitted explicitly rather than left implicit, so the target is never ambiguous
  * in `ps` output or a log.
  */
-export function buildD1ExecuteArgs({ sql, remote = false, json = false }: D1ExecuteOptions): string[] {
+export function buildD1ExecuteArgs({ sql, remote = false, json = false, persistTo }: D1ExecuteOptions): string[] {
   const args = ['wrangler', 'd1', 'execute', DB_NAME, remote ? '--remote' : '--local'];
+  if (!remote && persistTo !== undefined) args.push('--persist-to', persistTo);
   if (json) args.push('--json');
   args.push('--command', sql);
   return args;
@@ -55,7 +62,8 @@ export function extractJson<T = unknown>(stdout: string): T {
  * exit, leaving the caller's error boundary to handle it.
  */
 export function runD1Execute(options: D1ExecuteOptions): string {
-  const result = spawnSync('npx', buildD1ExecuteArgs(options), { encoding: 'utf8' });
+  const persistTo = options.persistTo ?? process.env.NACHBARIN_D1_PERSIST_TO;
+  const result = spawnSync('npx', buildD1ExecuteArgs({ ...options, persistTo }), { encoding: 'utf8' });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`wrangler exited with status ${result.status ?? 'null'}:\n${result.stderr}`);
