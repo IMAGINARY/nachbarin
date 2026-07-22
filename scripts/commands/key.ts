@@ -9,10 +9,10 @@
  */
 
 import { parseArgs } from 'node:util';
-import { type CommandContext, type CommandGroup, requireFlag, requirePositiveInt } from '../lib/command.ts';
+import { type CommandContext, type CommandGroup, requireFlag, requireInstallationPair, requirePositiveInt } from '../lib/command.ts';
 import { confirmTyped } from '../lib/confirm.ts';
 import { executeAndCount, queryRows } from '../lib/d1.ts';
-import { assertIdentifier, escapeLiteral } from '../lib/sql.ts';
+import { escapeLiteral } from '../lib/sql.ts';
 import { formatTable } from '../lib/table.ts';
 import { generateKey, hashKey } from '../lib/keygen.ts';
 
@@ -37,11 +37,8 @@ function runMint(ctx: CommandContext): void {
     allowPositionals: false,
   });
 
-  const app = requireFlag(values.app, 'app');
-  const instance = values.instance ?? 'default';
+  const { app, instance } = requireInstallationPair(values);
   const kind = requireFlag(values.kind, 'kind');
-  assertIdentifier(app, 'app_id');
-  assertIdentifier(instance, 'instance_id');
   if (kind !== 'read' && kind !== 'write') {
     throw new Error(`Invalid --kind: ${JSON.stringify(kind)}. Must be 'read' or 'write'.`);
   }
@@ -81,10 +78,7 @@ function runList(ctx: CommandContext): void {
     allowPositionals: false,
   });
 
-  const app = requireFlag(values.app, 'app');
-  const instance = values.instance ?? 'default';
-  assertIdentifier(app, 'app_id');
-  assertIdentifier(instance, 'instance_id');
+  const { app, instance } = requireInstallationPair(values);
 
   const sql = `
     SELECT k.id, k.kind, k.label, k.created_at, k.revoked_at
@@ -136,10 +130,7 @@ async function runRevoke(ctx: CommandContext): Promise<void> {
     confirmTarget = String(id);
     describe = `key id ${id}`;
   } else if (values.label !== undefined) {
-    const app = requireFlag(values.app, 'app');
-    const instance = values.instance ?? 'default';
-    assertIdentifier(app, 'app_id');
-    assertIdentifier(instance, 'instance_id');
+    const { app, instance } = requireInstallationPair(values);
     predicate =
       `installation_pk = (SELECT id FROM installations WHERE app_id = '${app}' AND instance_id = '${instance}') ` +
       `AND label = ${escapeLiteral(values.label)} AND revoked_at IS NULL`;

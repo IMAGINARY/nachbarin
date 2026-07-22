@@ -29,8 +29,10 @@ import { localDateOf } from './validation';
  * The installation is resolved by scalar subquery rather than passed in. `Principal` carries the
  * business pair (app_id, instance_id) and deliberately not a schema surrogate, and `UNIQUE (app_id,
  * instance_id)` makes this an index lookup that the planner evaluates once per statement. If it
- * somehow found nothing the NOT NULL fails loudly rather than inventing a row — it cannot, since the
- * key resolved against that very installation moments ago.
+ * finds nothing the NOT NULL fails loudly rather than inventing a row — which can happen in exactly
+ * one way: the key resolved against that very installation moments ago, so only an operator renaming
+ * the pair (`installation edit`) between this request's auth and its batch lands here. The loud
+ * failure is right for that too — 500, the client retries, and the retry resolves the new name.
  */
 const INSERT_SQL = `
   INSERT INTO records (installation_pk, client_id, created_date, received_date, engine_version, content_version, app_data)

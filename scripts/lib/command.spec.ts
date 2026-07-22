@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { requireFlag, requirePositiveInt } from './command.ts';
+import { requireFlag, requireInstallationPair, requirePositiveInt } from './command.ts';
 
 describe('requireFlag', () => {
   it('returns the value when present', () => {
@@ -8,6 +8,25 @@ describe('requireFlag', () => {
 
   it('throws when undefined, naming the flag', () => {
     expect(() => requireFlag(undefined, 'app')).toThrow(/Missing required --app/);
+  });
+});
+
+describe('requireInstallationPair', () => {
+  it('returns both values when given', () => {
+    expect(requireInstallationPair({ app: 'fms', instance: 'museum-x' })).toEqual({ app: 'fms', instance: 'museum-x' });
+  });
+
+  it("defaults instance to 'default'", () => {
+    expect(requireInstallationPair({ app: 'fms' })).toEqual({ app: 'fms', instance: 'default' });
+  });
+
+  it('throws when --app is missing', () => {
+    expect(() => requireInstallationPair({})).toThrow(/Missing required --app/);
+  });
+
+  it('rejects invalid identifiers, naming the field', () => {
+    expect(() => requireInstallationPair({ app: 'has space' })).toThrow(/Invalid app_id/);
+    expect(() => requireInstallationPair({ app: 'fms', instance: "o'brien" })).toThrow(/Invalid instance_id/);
   });
 });
 

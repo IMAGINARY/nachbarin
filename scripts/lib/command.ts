@@ -5,6 +5,8 @@
  * cli.ts imports the command groups, the command groups import only these types and helpers.
  */
 
+import { assertIdentifier } from './sql.ts';
+
 /** The parsed global context handed to every command handler. */
 export interface CommandContext {
   /** Positional args and command-specific flags after the noun and verb, verbatim, for the command
@@ -47,6 +49,19 @@ export function requirePositiveInt(raw: string, name: string): number {
     throw new Error(`Invalid --${name}: ${JSON.stringify(raw)}. Must be a positive integer.`);
   }
   return n;
+}
+
+/**
+ * Parses the installation-selecting flag pair every pair-addressed command shares: `--app` is
+ * required, `--instance` defaults to 'default' (the schema's own default), and both are validated
+ * as identifiers before anything splices them into SQL.
+ */
+export function requireInstallationPair(values: { app?: string; instance?: string }): { app: string; instance: string } {
+  const app = requireFlag(values.app, 'app');
+  const instance = values.instance ?? 'default';
+  assertIdentifier(app, 'app_id');
+  assertIdentifier(instance, 'instance_id');
+  return { app, instance };
 }
 
 /**

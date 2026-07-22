@@ -9,9 +9,9 @@
  */
 
 import { parseArgs } from 'node:util';
-import { type CommandContext, type CommandGroup, requireFlag, requirePositiveInt } from '../lib/command.ts';
+import { type CommandContext, type CommandGroup, requireFlag, requireInstallationPair, requirePositiveInt } from '../lib/command.ts';
 import { queryRows } from '../lib/d1.ts';
-import { assertIdentifier, escapeLiteral } from '../lib/sql.ts';
+import { escapeLiteral } from '../lib/sql.ts';
 import { formatTable } from '../lib/table.ts';
 
 /** Renders a nullable text cell: SQL NULL comes back as `null` from wrangler's --json output. */
@@ -60,10 +60,7 @@ function runFirstRecord(ctx: CommandContext): void {
     allowPositionals: false,
   });
 
-  const app = requireFlag(values.app, 'app');
-  const instance = values.instance ?? 'default';
-  assertIdentifier(app, 'app_id');
-  assertIdentifier(instance, 'instance_id');
+  const { app, instance } = requireInstallationPair(values);
 
   // Scoped by the full (app_id, instance_id) pair, not the README's instance_id-only filter — instance_id
   // is not unique (it defaults to 'default'), so filtering on it alone would blur two apps at one venue.
@@ -107,10 +104,7 @@ function runKeyActivity(ctx: CommandContext): void {
     predicate = `k.id = ${id}`;
     describe = `key id ${id}`;
   } else if (values.label !== undefined) {
-    const app = requireFlag(values.app, 'app');
-    const instance = values.instance ?? 'default';
-    assertIdentifier(app, 'app_id');
-    assertIdentifier(instance, 'instance_id');
+    const { app, instance } = requireInstallationPair(values);
     predicate =
       `k.installation_pk = (SELECT id FROM installations WHERE app_id = '${app}' AND instance_id = '${instance}') ` +
       `AND k.label = ${escapeLiteral(values.label)}`;

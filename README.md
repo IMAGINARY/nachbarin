@@ -69,7 +69,7 @@ Identity lives in D1, in two hand-maintained tables: `installations` and `api_ke
 
 The operator CLI in `scripts/` is how that work is done. Run it as `node scripts/cli.ts <command> <subcommand>` — or `npm run admin -- <command> <subcommand>` — and `--help` lists the whole surface. It is a thin, audited wrapper over `wrangler d1 execute` and reuses your `wrangler login`: because wrangler has no parameter binding, the CLI validates every identifier and escapes every label in one place, generates keys in-process so they never touch the shell, and enforces the load-bearing statement orders below.
 
-**`--local` is the default; `--remote` must be typed.** Every command runs against the local dev database unless you pass `--remote`, mirroring the deliberate absence of a `db:migrate:remote` script — try a command locally, then repeat it with `--remote`. The destructive commands — `installation delete`, `key revoke`, `record erase` — additionally demand a typed confirmation on `--remote` (and `installation delete --cascade` demands one even locally). The minted key and query results go to stdout; every prompt and human-facing notice goes to stderr, so redirecting stdout captures exactly the data.
+**`--local` is the default; `--remote` must be typed.** Every command runs against the local dev database unless you pass `--remote`, mirroring the deliberate absence of a `db:migrate:remote` script — try a command locally, then repeat it with `--remote`. The destructive commands — `installation delete`, `key revoke`, `record erase` — additionally demand a typed confirmation on `--remote` (and `installation delete --cascade` demands one even locally), as does `installation edit` when it renames the pair. The minted key and query results go to stdout; every prompt and human-facing notice goes to stderr, so redirecting stdout captures exactly the data.
 
 `records` and `record_submissions` are written by the service, not hand-maintained: `records` is reachable through `record erase` and `export records`, and the submission log — which has no API at all — is read through the `log` subcommands. For a query the CLI does not parameterize, the raw SQL lives in [docs/operations.md](docs/operations.md).
 
@@ -84,6 +84,18 @@ node scripts/cli.ts installation create \
 `--instance` may be omitted; it defaults to `default`. Both ids are limited to 100 characters of `[a-zA-Z0-9._-]` — they are typed by hand and, being identifiers, must match exactly; anything expressive belongs in `--label`. The CLI rejects an out-of-charset id before it reaches SQL, and re-registering an existing pair is a plain `already exists` rather than a raw constraint error.
 
 `installation list` prints the full inventory — every pair with its record, key (active/revoked), and submission counts. `installation delete --app … --instance …` removes one, but refuses while any records, keys, or log rows remain; `--cascade` forces it and destroys all of them, including the forensic log and deliberately-kept revoked-key history, so it is only ever for an installation created by mistake — never for decommissioning a venue.
+
+### Renaming an installation
+
+The pair is an identifier, not a fixture: a typo, an app rename, or an exhibit moving between venues are all one in-place edit, because every reference (keys, records, log rows) uses the surrogate id and follows automatically.
+
+```sh
+node scripts/cli.ts installation edit \
+  --app future-mobility-simulator --instance default \
+  --new-instance museum-x --new-label "Deutsches Museum, north hall" --remote
+```
+
+Any of `--new-app`, `--new-instance`, and `--new-label` may be given (`--new-label ""` clears the label); renaming onto an existing pair is refused with a plain message rather than a raw constraint error. Two things to be deliberate about. A rename is the _same_ installation continuing under a new name — its history is reported under the new pair from then on, so for a venue move where the old and new venue's data should stay separate, register a new installation instead. And keys follow the rename: right for a travelling copy, but on a sale or handover, revoke the old keys and mint fresh ones.
 
 ### Minting a key
 

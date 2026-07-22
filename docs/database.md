@@ -46,7 +46,8 @@ repository name), never the physical exhibit; `instance_id` is where it runs and
   is what makes the dedupe key unambiguous: `instance_id` scopes nothing alone.
 - **Charset CHECKs** restrict both ids to the GitHub-repo-name charset: the values are typed by
   hand into shell commands and SQL, where a stray space is invisible. Anything expressive goes in
-  `label` — and the pair itself is an identifier, never to be reworded.
+  `label` — the pair is an identifier, but a renameable one: `installation edit` updates it in
+  place, and every key, record, and log row follows the surrogate id.
 
 ## api_keys
 

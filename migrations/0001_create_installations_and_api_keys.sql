@@ -19,7 +19,8 @@ CREATE TABLE installations (
   -- Where the app runs: a museum, or one copy of a travelling exhibition.
   instance_id TEXT NOT NULL DEFAULT 'default',
 
-  -- For humans. The (app_id, instance_id) pair is an identifier and should never be reworded.
+  -- For humans. Anything expressive goes here, not in the pair -- the pair is an identifier,
+  -- renameable in place (the CLI's `installation edit`) because references use the surrogate id.
   label       TEXT,
 
   created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

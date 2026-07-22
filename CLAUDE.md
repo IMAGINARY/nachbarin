@@ -54,7 +54,7 @@ D1 counts an index write as a row written, so the row quota — not storage — 
 - `npm run format` — prettier `--write` over the repo; `npm run format:check` to verify without writing. Formatting is not part of `npm run lint`, so it is only enforced by the IDE-on-save setting and by running these.
 - `npx tsc --noEmit` — type-check `src/`; `npx tsc --noEmit -p test/tsconfig.json` for `test/`, and `npm run typecheck:scripts` (`-p scripts/tsconfig.json`) for the operator CLI (both excluded from the root config)
 - `npm run cf-typegen` — regenerate the `Env` type in `worker-configuration.d.ts` via `wrangler types`
-- `npm run admin -- <command> <subcommand>` (or `node scripts/cli.ts <command> <subcommand>`) — the operator CLI in `scripts/`: register installations, mint/revoke keys, read the submission log, erase or export records. `--local` by default; `--remote` must be typed. See README "Operations".
+- `npm run admin -- <command> <subcommand>` (or `node scripts/cli.ts <command> <subcommand>`) — the operator CLI in `scripts/`: register or rename installations, mint/revoke keys, read the submission log, erase or export records. `--local` by default; `--remote` must be typed. See README "Operations".
 - `npm run db:migrate:local` — apply `migrations/` to the local D1. There is deliberately **no** `db:migrate:remote` script: that command rewrites production, D1 has no down-migrations, and it should be typed on purpose (`npx wrangler d1 migrations apply nachbarin --remote`). See README "Operations" for minting and revoking keys.
 
 ## Architecture & conventions

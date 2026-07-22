@@ -1,7 +1,9 @@
 /**
- * `installation` commands — create, list, and delete the (app_id, instance_id) pairs records belong to.
+ * `installation` commands — create, edit, list, and delete the (app_id, instance_id) pairs records belong to.
  *
  * `create` replaces the README's "Registering an installation" recipe and is additive (no confirmation);
+ * `edit` renames the pair and/or rewrites the label in place — safe because every reference uses the
+ * surrogate id, so keys, records and log rows follow the rename;
  * `list` is the one legitimately global read — a full inventory with per-installation child counts;
  * `delete` is guarded — every child FK is ON DELETE RESTRICT, so it refuses a non-empty installation and
  * only tears one down with an explicit --cascade. Every value spliced into SQL goes through lib/sql.ts
@@ -9,7 +11,7 @@
  */
 
 import { parseArgs } from 'node:util';
-import { type CommandContext, type CommandGroup, requireFlag } from '../lib/command.ts';
+import { type CommandContext, type CommandGroup, requireInstallationPair } from '../lib/command.ts';
 import { confirmTyped } from '../lib/confirm.ts';
 import { executeAndCount, queryRows } from '../lib/d1.ts';
 import { assertIdentifier, escapeLiteral } from '../lib/sql.ts';
@@ -35,10 +37,7 @@ function runCreate(ctx: CommandContext): void {
     allowPositionals: false,
   });
 
-  const app = requireFlag(values.app, 'app');
-  const instance = values.instance ?? 'default';
-  assertIdentifier(app, 'app_id');
-  assertIdentifier(instance, 'instance_id');
+  const { app, instance } = requireInstallationPair(values);
   const labelSql = values.label === undefined ? 'NULL' : escapeLiteral(values.label);
 
   // Insert-via-SELECT guarded by NOT EXISTS so re-registering a pair is a friendly "already exists" rather
@@ -53,6 +52,82 @@ function runCreate(ctx: CommandContext): void {
     throw new Error(`Installation ${app}/${instance} already exists.`);
   }
   process.stderr.write(`Registered installation ${app}/${instance}.\n`);
+}
+
+async function runEdit(ctx: CommandContext): Promise<void> {
+  const { values } = parseArgs({
+    args: ctx.args,
+    options: {
+      app: { type: 'string' },
+      instance: { type: 'string' },
+      'new-app': { type: 'string' },
+      'new-instance': { type: 'string' },
+      'new-label': { type: 'string' },
+    },
+    allowPositionals: false,
+  });
+
+  const { app, instance } = requireInstallationPair(values);
+  const newApp = values['new-app'] ?? app;
+  const newInstance = values['new-instance'] ?? instance;
+  if (values['new-app'] !== undefined) assertIdentifier(newApp, 'new-app');
+  if (values['new-instance'] !== undefined) assertIdentifier(newInstance, 'new-instance');
+
+  const pair = `${app}/${instance}`;
+  const newPair = `${newApp}/${newInstance}`;
+  const pairChanges = newApp !== app || newInstance !== instance;
+  if (!pairChanges && values['new-label'] === undefined) {
+    throw new Error('Nothing to change: provide --new-app, --new-instance, and/or --new-label.');
+  }
+
+  // Resolve the source id and probe the target pair in one read. Precheck and UPDATE are not one
+  // transaction, but UNIQUE (app_id, instance_id) backstops the race — the probe exists for the
+  // friendly message, same stance as `create`'s NOT EXISTS guard.
+  const [probe] = queryRows<{ source_id: number | null; target_id: number | null }>(
+    `
+    SELECT
+      (SELECT id FROM installations WHERE app_id = '${app}' AND instance_id = '${instance}') AS source_id,
+      (SELECT id FROM installations WHERE app_id = '${newApp}' AND instance_id = '${newInstance}') AS target_id;
+    `,
+    ctx,
+  );
+  if (probe === undefined || probe.source_id === null) {
+    throw new Error(`No installation ${pair} found.`);
+  }
+  if (pairChanges && probe.target_id !== null) {
+    throw new Error(`Installation ${newPair} already exists — renaming ${pair} onto it would collide.`);
+  }
+
+  if (pairChanges) {
+    process.stderr.write(
+      `About to rename ${pair} to ${newPair}. Keys, records and log rows stay attached (references use ` +
+        `the surrogate id), and existing records will be reported under the new pair.\n`,
+    );
+    // Typed confirmation on --remote only when the identity changes (as in `key revoke`); a
+    // label-only edit is cosmetic and skips it.
+    if (ctx.remote) {
+      const ok = await confirmTyped(pair, `Type ${JSON.stringify(pair)} to confirm renaming on --remote: `);
+      if (!ok) throw new Error('Aborted: confirmation did not match.');
+    }
+  }
+
+  const sets: string[] = [];
+  if (pairChanges) sets.push(`app_id = '${newApp}'`, `instance_id = '${newInstance}'`);
+  if (values['new-label'] !== undefined) {
+    // --new-label '' clears the label back to NULL, `create`'s "no label" state.
+    sets.push(`label = ${values['new-label'] === '' ? 'NULL' : escapeLiteral(values['new-label'])}`);
+  }
+
+  // `source_id` was just resolved from the pair — a surrogate integer, safe to interpolate (as in
+  // the cascade delete below).
+  const changed = executeAndCount(`UPDATE installations SET ${sets.join(', ')} WHERE id = ${probe.source_id};`, ctx);
+  if (changed !== 1) {
+    throw new Error(`Expected to update 1 installation, updated ${changed}.`);
+  }
+
+  const labelNote =
+    values['new-label'] === undefined ? '' : values['new-label'] === '' ? ' (label cleared)' : ` (label: ${values['new-label']})`;
+  process.stderr.write(pairChanges ? `Renamed ${pair} to ${newPair}${labelNote}.\n` : `Updated ${pair}${labelNote}.\n`);
 }
 
 function runList(ctx: CommandContext): void {
@@ -102,10 +177,7 @@ async function runDelete(ctx: CommandContext): Promise<void> {
     allowPositionals: false,
   });
 
-  const app = requireFlag(values.app, 'app');
-  const instance = values.instance ?? 'default';
-  assertIdentifier(app, 'app_id');
-  assertIdentifier(instance, 'instance_id');
+  const { app, instance } = requireInstallationPair(values);
   const pair = `${app}/${instance}`;
 
   // Resolve the surrogate id and the three child-row counts in one read. All child FKs are ON DELETE
@@ -175,6 +247,7 @@ export const installation: CommandGroup = {
   description: 'Installations — the (app_id, instance_id) pairs that records belong to.',
   verbs: {
     create: { summary: 'Register a new installation.', run: runCreate },
+    edit: { summary: 'Rename the (app, instance) pair and/or change the label.', run: runEdit },
     list: { summary: 'List all installations with record, key, and submission counts.', run: runList },
     delete: {
       summary: 'Delete an installation (refuses unless empty; --cascade forces, for mistakes only).',
