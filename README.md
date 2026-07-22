@@ -41,7 +41,7 @@ This is a real limit, not a guarantee of anonymity: `id` is monotonic, so the or
 
 `record_submissions` is where everything `records` refuses to keep goes: the exact timestamps, and what the edge knew about the connection. It answers the questions you only ask when something is wrong — _why did this exhibit stop uploading, what was the first record from the new venue, where did this batch actually come from._
 
-It is written on every POST and read by nobody: there is no endpoint, and no key of any kind reaches it. An operator queries it with `wrangler d1 execute`.
+It is written on every POST and read by nobody: there is no endpoint, and no key of any kind reaches it. An operator reads it out of band, with the `log` subcommands of the CLI (see [Operations](#operations)).
 
 **One row per record per POST, including duplicates.** This is a log of submissions, not metadata attached to a record — a resubmission stores no record (`ON CONFLICT DO NOTHING`) but still gets a row. That is the point: an exhibit whose queue has stopped draining, a batch replayed from a different address, and a client resending one `client_id` with different `app_data` all produce no record at all, and would otherwise leave no trace anywhere. Per-record metadata is still available as a view — the earliest row for an `(installation, client_id)` is the submission that created the record.
 
@@ -67,174 +67,132 @@ Deleting a _record_ does not delete its log rows: there is no foreign key, delib
 
 Identity lives in D1, in two hand-maintained tables: `installations` and `api_keys`. There is no admin UI, and deliberately no admin endpoint — this is rare, irreversible work that should be typed on purpose.
 
-`records` and `record_submissions` are written by the service and are not hand-maintained, but the log has no API at all, so everything you do with it is SQL. The recipes are under [Reading the submission log](#reading-the-submission-log).
+The operator CLI in `scripts/` is how that work is done. Run it as `node scripts/cli.ts <command> <subcommand>` — or `npm run admin -- <command> <subcommand>` — and `--help` lists the whole surface. It is a thin, audited wrapper over `wrangler d1 execute` and reuses your `wrangler login`: because wrangler has no parameter binding, the CLI validates every identifier and escapes every label in one place, generates keys in-process so they never touch the shell, and enforces the load-bearing statement orders below.
+
+**`--local` is the default; `--remote` must be typed.** Every command runs against the local dev database unless you pass `--remote`, mirroring the deliberate absence of a `db:migrate:remote` script — try a command locally, then repeat it with `--remote`. The destructive commands — `installation delete`, `key revoke`, `record erase` — additionally demand a typed confirmation on `--remote` (and `installation delete --cascade` demands one even locally). The minted key and query results go to stdout; every prompt and human-facing notice goes to stderr, so redirecting stdout captures exactly the data.
+
+`records` and `record_submissions` are written by the service, not hand-maintained: `records` is reachable through `record erase` and `export records`, and the submission log — which has no API at all — is read through the `log` subcommands. For a query the CLI does not parameterize, the raw SQL lives in [docs/operations.md](docs/operations.md).
 
 ### Registering an installation
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "INSERT INTO installations (app_id, instance_id, label)
-   VALUES ('future-mobility-simulator', 'museum-x', 'Deutsches Museum, north hall');"
+node scripts/cli.ts installation create \
+  --app future-mobility-simulator --instance museum-x \
+  --label "Deutsches Museum, north hall" --remote
 ```
 
-`instance_id` may be omitted; it defaults to `'default'`. Both are limited to 100 characters of `[a-zA-Z0-9._-]`: they are typed by hand into commands like the ones on this page and pasted into SQL, where a stray space or quote is invisible in the terminal and produces an identifier that matches nothing.
+`--instance` may be omitted; it defaults to `default`. Both ids are limited to 100 characters of `[a-zA-Z0-9._-]` — they are typed by hand and, being identifiers, must match exactly; anything expressive belongs in `--label`. The CLI rejects an out-of-charset id before it reaches SQL, and re-registering an existing pair is a plain `already exists` rather than a raw constraint error.
+
+`installation list` prints the full inventory — every pair with its record, key (active/revoked), and submission counts. `installation delete --app … --instance …` removes one, but refuses while any records, keys, or log rows remain; `--cascade` forces it and destroys all of them, including the forensic log and deliberately-kept revoked-key history, so it is only ever for an installation created by mistake — never for decommissioning a venue.
 
 ### Minting a key
 
-Only the sha256 of a key is stored, so **the key is unrecoverable after this** — print it once, hand it over, forget it.
+Only the sha256 of a key is stored, so **the key is unrecoverable after this** — it is printed once, to stdout, and never again.
 
 ```sh
-# 1. 256 bits, base64url, unpadded: safe in an HTTP header and a URL.
-#    The leading space keeps it out of shell history (needs HISTCONTROL=ignorespace).
- KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-
-# 2. Hash exactly the bytes the Worker will hash.
-#    `printf %s` -- NOT `echo`, which appends a newline and produces a completely
-#    different hash, and so a key that 401s forever for no visible reason.
- HASH="$(printf %s "$KEY" | shasum -a 256 | cut -d' ' -f1)"
-
-# 3. Store the hash. `kind` is 'write' (deposits records) or 'read' (downloads
-#    them); it must be stated, because nothing else in the row implies it.
-#    `label` is how you will identify this key later, since the hash tells you
-#    nothing.
-npx wrangler d1 execute nachbarin --remote --command \
-  "INSERT INTO api_keys (key_hash, kind, installation_pk, label)
-   SELECT '$HASH', 'write', id, 'Station 1, north entrance'
-   FROM installations
-   WHERE app_id = 'future-mobility-simulator' AND instance_id = 'museum-x';"
-
-# 4. Print it once and hand it over via a secure channel.
- echo "$KEY"
+node scripts/cli.ts key mint \
+  --app future-mobility-simulator --instance museum-x \
+  --kind write --label "Station 1, north entrance" --remote
 ```
 
-The `SELECT ... FROM installations WHERE` form means you name the installation the way you think of it and never look up its surrogate id; if the pair does not exist, zero rows are inserted rather than the wrong ones.
+`--kind` is `write` (deposits records) or `read` (downloads them) and must be stated, because nothing else in the row implies it. `--label` is how you will identify this key later, since the hash tells you nothing. The key is generated in-process and prints alone on stdout, so `key mint … --remote > key.txt` captures exactly the key and nothing else; hand it over via a secure channel and delete the file. The old `printf`-vs-`echo` hashing trap — where `echo`'s trailing newline silently minted a key that 401s forever — is gone by construction here, because the key never passes through the shell.
 
-A **read key** is minted exactly the same way, with `'read'` in place of `'write'`:
+You name the installation the way you think of it; if the `(app, instance)` pair does not exist, the CLI mints nothing and says so, rather than inventing a key with more reach than you meant.
+
+A **read key** is minted identically, with `--kind read`:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "INSERT INTO api_keys (key_hash, kind, installation_pk, label)
-   SELECT '$HASH', 'read', id, 'Operator download, north hall'
-   FROM installations
-   WHERE app_id = 'future-mobility-simulator' AND instance_id = 'museum-x';"
+node scripts/cli.ts key mint \
+  --app future-mobility-simulator --instance museum-x \
+  --kind read --label "Operator download, north hall" --remote
 ```
 
-Every key grants exactly one installation, whatever its kind, and `installation_pk` is `NOT NULL` — so an omitted installation is an error rather than a key with more reach than you meant. A read key downloads that one installation's records: `GET /v1/records` takes no `?app=` or `?instance=`, because the key already settles the question.
+Every key grants exactly one installation, whatever its kind. A read key downloads that one installation's records: `GET /v1/records` takes no `?app=` or `?instance=`, because the key already settles the question.
+
+`key list --app … --instance …` shows every key for an installation — its id, kind, creation time, and revocation state — but never the hash, which is not a key and is useless as one.
 
 ### Exporting across installations
 
 There is deliberately no key that spans installations. A cross-installation export is a query run by hand, not a credential:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --json --command \
-  "SELECT i.app_id, i.instance_id, r.created_date, r.engine_version, r.app_data
-   FROM records r
-   JOIN installations i ON i.id = r.installation_pk
-   WHERE r.created_date BETWEEN '2026-07-01' AND '2026-07-31'
-   ORDER BY r.id;" > export.json
+node scripts/cli.ts export records --from 2026-07-01 --to 2026-07-31 --remote > export.ndjson
 ```
 
-`app_data` is JSON in a text column, so SQLite's JSON functions work on it directly — `json_extract(r.app_data, '$.nodes')` and friends. A `CHECK (json_valid(app_data))` on the table means an export can never die partway through on a row that will not parse.
+`--from`/`--to` bound `created_date`; either may be omitted for an open-ended range, and both omitted exports the whole corpus. Output is NDJSON — one record per line — to stdout, with the count on stderr so it never pollutes the data; pass `--json` for a single pretty-printed array instead. Each record's `app_data` comes back as a real JSON value, not a string, so the file is directly consumable.
 
-A token that spanned installations would be a standing credential — on a laptop, in a CI variable, in a chat log — reading every museum's data for as long as it exists. Running the query needs database access at the moment you need it, and leaves nothing behind.
+A token that spanned installations would be a standing credential — on a laptop, in a CI variable, in a chat log — reading every museum's data for as long as it exists. Running the export needs database access at the moment you need it, and leaves nothing behind. For a shape the CLI does not offer — a different projection, a join, or `json_extract(app_data, '$.nodes')` over the payload — adapt the raw query in [docs/operations.md](docs/operations.md); `app_data` is JSON in a text column with a `CHECK (json_valid(...))`, so SQLite's JSON functions work on it directly and an export can never die partway on a row that will not parse.
 
 ### Revoking a key
 
-Revocation is a soft delete: the row stays, so the hash can never be re-issued and you keep the record of what existed. Rotation is insert-new → hand over → revoke-old.
+Revocation is a soft delete: the row stays, so the hash can never be re-issued and you keep the record of what existed. Rotation is mint-new → hand over → revoke-old.
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "UPDATE api_keys SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-   WHERE label = 'Station 1, north entrance';"
+node scripts/cli.ts key revoke \
+  --app future-mobility-simulator --instance museum-x \
+  --label "Station 1, north entrance" --remote
 ```
 
-A revoked key answers `401`, identically to a key that never existed.
+Select the key by `--label` within its installation, or by `--id` (from `key list`) when a label matches more than one. On `--remote` the CLI names the matching keys and asks you to retype the target before it writes. A revoked key answers `401`, identically to a key that never existed.
 
-To find out what a key you are about to revoke has been writing — and from where — see [Reading the submission log](#reading-the-submission-log). That is what `key_id` is for.
+To find out what a key you are about to revoke has been writing — and from where — see `log key-activity` under [Reading the submission log](#reading-the-submission-log). That is what `key_id` is for.
 
 ### Reading the submission log
 
-None of this is reachable over HTTP. Swap `--remote` for `--local` to try any of it against your dev database first.
+The log has no HTTP endpoint; the `log` subcommands are the only structured way to read it, and swapping `--remote` for `--local` (the default) tries any of them against your dev database first. Each only renders what it finds — it never "cleans up" the verbatim edge data, because a value that looks wrong in a forensic table is the point of the table.
 
 **The exact time a record was made**, while it is still inside the window:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "SELECT s.created_at, s.received_at, s.client_ip, s.cf_timezone
-   FROM record_submissions s
-   JOIN records r ON r.installation_pk = s.installation_pk AND r.client_id = s.client_id
-   WHERE r.id = 184002
-   ORDER BY s.received_at
-   LIMIT 1;"
+node scripts/cli.ts log record-time --id 184002 --remote
 ```
 
-The earliest row is the submission that created the record; any later ones are resends. `created_at` comes back exactly as the exhibit sent it, offset included — compare its offset against `cf_timezone` to find out whether the exhibit's clock is telling the truth.
+The earliest row is the submission that created the record; any later ones are resends. `CREATED_AT` comes back exactly as the exhibit sent it, offset included — compare its offset against `TIMEZONE` (resolved from the IP, independent of the exhibit's claim) to find out whether the exhibit's clock is telling the truth.
 
 **Why did this venue stop uploading** — last contact per installation, with the connection it came in on:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "SELECT i.app_id, i.instance_id, MAX(s.received_at) AS last_seen,
-          s.client_ip, s.cf_as_organization, s.cf_colo
-   FROM record_submissions s
-   JOIN installations i ON i.id = s.installation_pk
-   GROUP BY s.installation_pk
-   ORDER BY last_seen;"
+node scripts/cli.ts log last-seen --remote
 ```
 
-An installation missing from this list has sent nothing in 90 days. A `client_ip` or `cf_as_organization` that changed is a venue that changed ISP.
+An installation missing from this list has sent nothing in 90 days. An `IP` or `ISP` that changed is a venue that changed connection.
 
 **The first record from a new venue:**
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "SELECT s.received_at, s.created_at, s.client_ip, s.user_agent
-   FROM record_submissions s
-   JOIN installations i ON i.id = s.installation_pk
-   WHERE i.instance_id = 'museum-x'
-   ORDER BY s.received_at LIMIT 1;"
+node scripts/cli.ts log first-record \
+  --app future-mobility-simulator --instance museum-x --remote
 ```
 
-**A queue that has stopped draining** — batches where nothing was new. Every `client_id` here already existed, so the exhibit is uploading and storing nothing:
+**A queue that has stopped draining** — batches where an unusually large number of records arrived and, likely, nothing was new. If every `client_id` already existed, the exhibit is uploading and storing nothing:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "SELECT s.submission_id, s.received_at, COUNT(*) AS records, s.client_ip
-   FROM record_submissions s
-   GROUP BY s.submission_id
-   HAVING COUNT(*) > 10
-   ORDER BY s.received_at DESC LIMIT 50;"
+node scripts/cli.ts log stale-batches --remote          # threshold is --min 10 by default
 ```
 
-Cross-check a `submission_id` against `records.received_date`: many rows in the log and no matching records means every one came back `duplicate`.
+Cross-check a `SUBMISSION_ID` against `records.received_date` (see [docs/operations.md](docs/operations.md)): many rows in the log and no matching records means every one came back `duplicate`.
 
 **What has this key been doing** — before revoking it, or after finding it somewhere it should not be:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "SELECT k.label, s.client_ip, s.cf_country, s.cf_as_organization,
-          s.user_agent, COUNT(*) AS records, MIN(s.received_at), MAX(s.received_at)
-   FROM record_submissions s
-   JOIN api_keys k ON k.id = s.key_id
-   WHERE k.label = 'Station 1, north entrance'
-   GROUP BY s.client_ip, s.user_agent
-   ORDER BY COUNT(*) DESC;"
+node scripts/cli.ts log key-activity \
+  --app future-mobility-simulator --instance museum-x \
+  --label "Station 1, north entrance" --remote
 ```
 
-Two IPs where you expected one, an unexpected country, or a `user_agent` that is not the engine are each worth a look. None of them proves anything on its own — a `user_agent` is self-reported — but an attacker who forges one usually forgets the other.
+Select the key by `--label`/`--app` or by `--id`, exactly as `key revoke` does. Two IPs where you expected one, an unexpected country, or a `USER_AGENT` that is not the engine are each worth a look. None of them proves anything on its own — a user agent is self-reported — but an attacker who forges one usually forgets the other.
+
+These cover the common questions; for an ad-hoc filter the subcommands do not expose, the underlying SQL is in [docs/operations.md](docs/operations.md).
 
 ### Erasing a record
 
-Deleting a record does **not** delete its submission log rows, and that is deliberate: the log is the evidence of who sent it, and you delete a vandalised record precisely when that evidence matters. For a genuine erasure request inside the 90-day window, delete both:
+Deleting a record does **not** delete its submission log rows, and that is deliberate: the log is the evidence of who sent it, and you delete a vandalised record precisely when that evidence matters. For a genuine erasure request inside the 90-day window, `record erase` removes both:
 
 ```sh
-npx wrangler d1 execute nachbarin --remote --command \
-  "DELETE FROM record_submissions
-   WHERE (installation_pk, client_id) IN (SELECT installation_pk, client_id FROM records WHERE id = 184002);
-   DELETE FROM records WHERE id = 184002;"
+node scripts/cli.ts record erase --id 184002 --remote
 ```
 
-In that order — the log rows are found through the record. Outside the window there is nothing to do: the log rows are already gone. Deleting from `records` leaves a gap in the cursor, which is expected and invisible to readers; `id` is `AUTOINCREMENT`, so the number is never reused.
+It deletes the log rows first — they are located through the record — and the record second, an order the CLI enforces so it cannot be got wrong. On `--remote` it reports how many log rows will go and asks you to retype the id before writing. Outside the window there is nothing extra to do: the log rows are already gone. Deleting from `records` leaves a gap in the cursor, which is expected and invisible to readers; `id` is `AUTOINCREMENT`, so the number is never reused.
 
 ### Schema changes
 

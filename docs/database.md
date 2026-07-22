@@ -55,9 +55,9 @@ query string.
 
 - **`key_hash`** — sha256 of the key, lowercase hex, exactly what
   `printf %s "$key" | shasum -a 256` prints (`echo` appends a newline and mints a key that 401s
-  forever; see README). The key itself is never stored. Comparison is BINARY, so the format CHECK
-  turns a mis-cased or padded hash into a loud INSERT error instead of a credential that never
-  matches.
+  forever — `key mint` hashes in-process to sidestep this, so mint through the CLI; see README
+  "Minting a key"). The key itself is never stored. Comparison is BINARY, so the format CHECK turns a
+  mis-cased or padded hash into a loud INSERT error instead of a credential that never matches.
 - **`kind`** — `read` or `write`. Not derivable from anything: both kinds carry an installation, so
   this column is the only thing separating a key that may download from one that may only deposit.
 - **`installation_pk`** — `NOT NULL`: every key is scoped to exactly one installation, and there is
