@@ -28,6 +28,15 @@ export interface CommandGroup {
 }
 
 /**
+ * Returns `value` or throws if it is undefined — for a required `--flag` after `parseArgs`, which types
+ * every option as optional. `name` is the flag as the operator typed it (without the leading `--`).
+ */
+export function requireFlag(value: string | undefined, name: string): string {
+  if (value === undefined) throw new Error(`Missing required --${name}.`);
+  return value;
+}
+
+/**
  * Builds a stub handler for a command whose real implementation lands in a later phase. It prints a
  * clear notice and signals failure, so a not-yet-built command is never silently mistaken for a
  * successful no-op.

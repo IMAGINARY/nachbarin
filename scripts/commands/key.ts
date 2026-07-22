@@ -9,16 +9,12 @@
  */
 
 import { parseArgs } from 'node:util';
-import type { CommandContext, CommandGroup } from '../lib/command.ts';
+import { type CommandContext, type CommandGroup, requireFlag } from '../lib/command.ts';
 import { confirmTyped } from '../lib/confirm.ts';
+import { executeAndCount, queryRows } from '../lib/d1.ts';
 import { assertIdentifier, escapeLiteral } from '../lib/sql.ts';
-import { extractJson, runD1Execute } from '../lib/wrangler.ts';
+import { formatTable } from '../lib/table.ts';
 import { generateKey, hashKey } from '../lib/keygen.ts';
-
-/** One element of `wrangler d1 execute --json` output — one per statement. Only the `results` we read. */
-interface D1ExecResult<Row> {
-  results: Row[];
-}
 
 /** A row of `key list` output. Deliberately excludes `key_hash` — a hash is not a key and is never shown. */
 interface KeyRow {
@@ -27,32 +23,6 @@ interface KeyRow {
   label: string | null;
   created_at: string;
   revoked_at: string | null;
-}
-
-/** Runs a single read statement and returns its rows. */
-function queryRows<Row>(sql: string, ctx: CommandContext): Row[] {
-  const [first] = extractJson<D1ExecResult<Row>[]>(runD1Execute({ sql, remote: ctx.remote, json: true }));
-  if (first === undefined) throw new Error('wrangler returned no result set.');
-  return first.results;
-}
-
-/**
- * Runs a write statement and returns the number of rows it changed, read from SQLite's `changes()` as a
- * trailing statement. Not `meta.changes`: wrangler's `--json` meta omits it on local D1 (only `duration`
- * is present), so `changes()` is the one row count that reads the same on local and remote.
- */
-function executeAndCount(sql: string, ctx: CommandContext): number {
-  const payload = extractJson<D1ExecResult<{ n: number }>[]>(
-    runD1Execute({ sql: `${sql}\nSELECT changes() AS n;`, remote: ctx.remote, json: true }),
-  );
-  const n = payload.at(-1)?.results[0]?.n;
-  if (typeof n !== 'number') throw new Error('Could not read changes() from wrangler output.');
-  return n;
-}
-
-function requireFlag(value: string | undefined, name: string): string {
-  if (value === undefined) throw new Error(`Missing required --${name}.`);
-  return value;
 }
 
 function runMint(ctx: CommandContext): void {
@@ -132,21 +102,10 @@ function runList(ctx: CommandContext): void {
 
 /** Aligned plain-text table. `STATE` surfaces revocation (`active` / `revoked <ts>`) so rotation is visible. */
 function formatKeyTable(rows: KeyRow[]): string {
-  const header = ['ID', 'KIND', 'STATE', 'CREATED', 'LABEL'];
-  const body = rows.map((r) => [
-    String(r.id),
-    r.kind,
-    r.revoked_at === null ? 'active' : `revoked ${r.revoked_at}`,
-    r.created_at,
-    r.label ?? '',
-  ]);
-  const widths = header.map((h, i) => Math.max(h.length, ...body.map((row) => row[i].length)));
-  const line = (cols: string[]): string =>
-    cols
-      .map((c, i) => c.padEnd(widths[i]))
-      .join('  ')
-      .trimEnd();
-  return `${[line(header), ...body.map(line)].join('\n')}\n`;
+  return formatTable(
+    ['ID', 'KIND', 'STATE', 'CREATED', 'LABEL'],
+    rows.map((r) => [String(r.id), r.kind, r.revoked_at === null ? 'active' : `revoked ${r.revoked_at}`, r.created_at, r.label ?? '']),
+  );
 }
 
 async function runRevoke(ctx: CommandContext): Promise<void> {
