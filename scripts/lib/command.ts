@@ -37,6 +37,19 @@ export function requireFlag(value: string | undefined, name: string): string {
 }
 
 /**
+ * Parses `raw` as a positive integer (a record or key id, or a positive count), or throws. `name` is the
+ * flag as the operator typed it (without the leading `--`). The result is safe to interpolate into SQL
+ * bare — it is a validated integer, not free-form text.
+ */
+export function requirePositiveInt(raw: string, name: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`Invalid --${name}: ${JSON.stringify(raw)}. Must be a positive integer.`);
+  }
+  return n;
+}
+
+/**
  * Builds a stub handler for a command whose real implementation lands in a later phase. It prints a
  * clear notice and signals failure, so a not-yet-built command is never silently mistaken for a
  * successful no-op.

@@ -9,7 +9,7 @@
  */
 
 import { parseArgs } from 'node:util';
-import { type CommandContext, type CommandGroup, requireFlag } from '../lib/command.ts';
+import { type CommandContext, type CommandGroup, requireFlag, requirePositiveInt } from '../lib/command.ts';
 import { confirmTyped } from '../lib/confirm.ts';
 import { executeAndCount, queryRows } from '../lib/d1.ts';
 import { assertIdentifier, escapeLiteral } from '../lib/sql.ts';
@@ -131,10 +131,7 @@ async function runRevoke(ctx: CommandContext): Promise<void> {
   let describe: string;
 
   if (values.id !== undefined) {
-    const id = Number(values.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      throw new Error(`Invalid --id: ${JSON.stringify(values.id)}. Must be a positive integer.`);
-    }
+    const id = requirePositiveInt(values.id, 'id');
     predicate = `id = ${id} AND revoked_at IS NULL`;
     confirmTarget = String(id);
     describe = `key id ${id}`;

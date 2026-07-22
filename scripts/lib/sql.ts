@@ -35,3 +35,19 @@ export function assertIdentifier(value: string, field: string): void {
 export function escapeLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
+
+// A 'YYYY-MM-DD' calendar date, the format records.created_date is stored in.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Throws unless `value` is a 'YYYY-MM-DD' date. Deliberately format-only, not calendar-validated: unlike
+ * src/validation.ts (which range-checks every component because it guards *stored* data), these are export
+ * *filter* bounds an operator types — an out-of-range date like 2026-02-30 simply matches no rows, a benign
+ * mistake. The check's real job is to keep a stray quote out of the interpolated WHERE. `field` names the
+ * offending argument in the error.
+ */
+export function assertDate(value: string, field: string): void {
+  if (!DATE_RE.test(value)) {
+    throw new Error(`Invalid ${field}: ${JSON.stringify(value)}. Must be a date in YYYY-MM-DD form.`);
+  }
+}

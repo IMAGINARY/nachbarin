@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertIdentifier, escapeLiteral } from './sql.ts';
+import { assertDate, assertIdentifier, escapeLiteral } from './sql.ts';
 
 describe('assertIdentifier', () => {
   it('accepts valid app/instance identifiers', () => {
@@ -31,5 +31,24 @@ describe('escapeLiteral', () => {
 
   it('handles the empty string', () => {
     expect(escapeLiteral('')).toBe("''");
+  });
+});
+
+describe('assertDate', () => {
+  it('accepts a well-formed YYYY-MM-DD date', () => {
+    expect(() => assertDate('2026-07-01', 'from')).not.toThrow();
+  });
+
+  it('rejects wrong shapes, non-dates, and injection attempts', () => {
+    expect(() => assertDate('2026-7-1', 'from')).toThrow(/Invalid from/);
+    expect(() => assertDate('not-a-date', 'from')).toThrow();
+    expect(() => assertDate("2026-07-01'; DROP TABLE records; --", 'to')).toThrow(/Invalid to/);
+    expect(() => assertDate('', 'from')).toThrow();
+  });
+
+  it('is format-only, not calendar-validated (an impossible date passes the shape check)', () => {
+    // Deliberate: an out-of-range filter bound just matches no rows. Contrast src/validation.ts, which
+    // must reject 2026-02-30 because it guards stored data.
+    expect(() => assertDate('2026-02-30', 'from')).not.toThrow();
   });
 });
