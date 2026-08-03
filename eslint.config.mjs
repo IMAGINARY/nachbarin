@@ -25,4 +25,16 @@ export default defineConfig([
       '@typescript-eslint/no-empty-object-type': ['error', { allowInterfaces: 'with-single-extends' }],
     },
   },
+  {
+    // Workers Logs indexes the fields of a lone object argument and nothing else, so a stray
+    // `console.log('msg', { … })` in the Worker is silently unqueryable rather than wrong-looking.
+    // Routing every call through one module is what makes that rule checkable — see `observability.ts`.
+    // Scoped to `src/`: `test/` prints freely and `scripts/` writes through `process.stdout`.
+    files: ['src/**/*.ts'],
+    rules: { 'no-console': 'error' },
+  },
+  {
+    files: ['src/observability.ts'],
+    rules: { 'no-console': 'off' },
+  },
 ]);

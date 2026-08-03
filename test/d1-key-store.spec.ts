@@ -9,6 +9,7 @@
 import { env } from 'cloudflare:test';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { D1KeyStore } from '../src/d1-key-store';
+import { RecordingLogger } from './fakes';
 import {
   ID_READER,
   ID_WRITE,
@@ -25,7 +26,9 @@ import {
 
 beforeAll(seedKeys);
 
-const store = () => new D1KeyStore(env.DB);
+// The logger is only reached by the unmappable-row branch, which the schema's CHECK makes
+// unreachable from here; collecting rather than printing keeps that assumption visible if it changes.
+const store = () => new D1KeyStore(env.DB, new RecordingLogger());
 
 describe('D1KeyStore.resolve', () => {
   // The golden fixtures are hashes of the documented minting command, computed outside this code.

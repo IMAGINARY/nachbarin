@@ -6,6 +6,7 @@
  */
 
 import type { Principal } from './auth';
+import type { Logger } from './observability';
 import type { KeyStore } from './storage';
 
 /** The one row {@link D1KeyStore.resolve} reads. */
@@ -52,7 +53,14 @@ async function sha256Hex(key: string): Promise<string> {
 }
 
 export class D1KeyStore implements KeyStore {
-  constructor(private readonly db: D1Database) {}
+  /**
+   * The logger is required rather than defaulted to `consoleLogger`: the one thing this class logs
+   * is a corrupt row, and a default would let `index.ts` forget to wire it and never say so.
+   */
+  constructor(
+    private readonly db: D1Database,
+    private readonly log: Logger,
+  ) {}
 
   async resolve(presentedKey: string): Promise<Principal | null> {
     const hash = await sha256Hex(presentedKey);
@@ -78,8 +86,10 @@ export class D1KeyStore implements KeyStore {
     // Unreachable while the CHECK on `kind` holds — which is the point: the schema and the type
     // system enforce one invariant from both ends. Fail closed rather than throw: a row we cannot
     // map is a row we cannot authorize. Logged, because unlike every other 401 this one means the
-    // database disagrees with `Principal`.
-    console.error('api_keys row does not map to a Principal', { kind: row.kind });
+    // database disagrees with `Principal`, and the holder of that key sees an ordinary 401 forever.
+    //
+    // `key_id` is what makes the row findable: the hash is one-way and `kind` narrows nothing.
+    this.log.error({ event: 'unmappable_key_row', key_id: row.id, kind: row.kind });
     return null;
   }
 }

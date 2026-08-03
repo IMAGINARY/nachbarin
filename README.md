@@ -73,6 +73,8 @@ The operator CLI in `scripts/` is how that work is done. Run it as `node scripts
 
 `records` and `record_submissions` are written by the service, not hand-maintained: `records` is reachable through `record stats`, `record erase` and `export records`, and the submission log — which has no API at all — is read through the `log` subcommands. For a query the CLI does not parameterize, the raw SQL lives in [docs/operations.md](docs/operations.md).
 
+**Diagnosing the service itself is a different thing from reading its data.** The Worker emits one structured line per request — what was asked for, by which installation, and how it went — to Cloudflare's Workers Logs, viewable in the dashboard or live with `npx wrangler tail`. That is separate from the submission log above and carries no visitor data at all. [docs/observability.md](docs/observability.md) lists every field, and states what is deliberately never logged and why.
+
 ### Registering an installation
 
 ```sh

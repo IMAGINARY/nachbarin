@@ -9,9 +9,41 @@
  */
 
 import type { Principal, ReadPrincipal, WritePrincipal } from '../src/auth';
+import type { Logger } from '../src/observability';
 import type { Provenance } from '../src/provenance';
 import type { Deps, InsertOutcome, KeyStore, ListPage, ListQuery, NewRecord, RecordStore, StoredRecord } from '../src/storage';
 import { localDateOf } from '../src/validation';
+
+/** One emitted log line, with the level it was emitted at. */
+export interface LoggedLine {
+  readonly level: 'info' | 'error';
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Collects log lines instead of printing them.
+ *
+ * The reason the `Logger` seam exists at all: `test/logging.spec.ts` asserts not just what a request
+ * logged but what it did *not* — no payload, no client_id, no key — and a `console` spy could not be
+ * queried that way. Same idiom as {@link FakeRecordStore.insertCalls}.
+ */
+export class RecordingLogger implements Logger {
+  readonly lines: LoggedLine[] = [];
+
+  info(fields: Readonly<Record<string, unknown>>): void {
+    this.lines.push({ level: 'info', fields });
+  }
+
+  error(fields: Readonly<Record<string, unknown>>): void {
+    this.lines.push({ level: 'error', fields });
+  }
+
+  /** The single line a request emitted. Throws rather than returning one of several — see the spec. */
+  only(): LoggedLine {
+    if (this.lines.length !== 1) throw new Error(`expected exactly one log line, got ${String(this.lines.length)}`);
+    return this.lines[0];
+  }
+}
 
 export class FakeKeyStore implements KeyStore {
   private readonly keys = new Map<string, Principal>();
@@ -189,6 +221,7 @@ export const SKEWED_CREATED_DATE = '1970-01-01';
 export interface TestDeps extends Deps {
   readonly keyStore: FakeKeyStore;
   readonly recordStore: FakeRecordStore;
+  readonly log: RecordingLogger;
 }
 
 /** Deps pre-wired with three write keys and two read keys, on three installations. */
@@ -203,7 +236,7 @@ export function makeDeps(): TestDeps {
   // `newSubmissionId` draws from the same counter as `uuid()`, for the reason `Deps` documents: the
   // real `crypto.randomUUID` would make a failure unreproducible. Every POST still gets a distinct
   // id, since the counter only ever moves forward.
-  return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW, newSubmissionId: uuid };
+  return { keyStore, recordStore: new FakeRecordStore(), now: () => FIXED_NOW, newSubmissionId: uuid, log: new RecordingLogger() };
 }
 
 let uuidCounter = 0;

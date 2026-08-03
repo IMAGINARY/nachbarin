@@ -13,6 +13,7 @@
  */
 
 import type { Principal, ReadPrincipal, WritePrincipal } from './auth';
+import type { Logger } from './observability';
 import type { Provenance } from './provenance';
 
 export interface KeyStore {
@@ -204,4 +205,14 @@ export interface Deps {
    * `provenanceOf` so that function stays pure and total.
    */
   readonly newSubmissionId: () => string;
+  /**
+   * Where structured log lines go.
+   *
+   * The *sink* belongs here; the per-request `LogFields` it is handed deliberately do not. `Deps` is
+   * built from `env` alone, once, and nothing about it is request-scoped — a mutable accumulator
+   * hoisted in here would be shared by every concurrent request in the isolate. It is threaded down
+   * the call chain as an argument instead, which is also what keeps the boundary the only place a
+   * line is emitted.
+   */
+  readonly log: Logger;
 }

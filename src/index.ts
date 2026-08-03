@@ -17,15 +17,17 @@
 import { handleRequest } from './app';
 import { D1KeyStore } from './d1-key-store';
 import { D1RecordStore } from './d1-record-store';
+import { consoleLogger, describeError } from './observability';
 import { purgeExpiredSubmissions } from './retention';
 import type { Deps } from './storage';
 
 function createDeps(env: Env): Deps {
   return {
-    keyStore: new D1KeyStore(env.DB),
+    keyStore: new D1KeyStore(env.DB, consoleLogger),
     recordStore: new D1RecordStore(env.DB),
     now: () => new Date(),
     newSubmissionId: () => crypto.randomUUID(),
+    log: consoleLogger,
   };
 }
 
@@ -44,10 +46,28 @@ export default {
    * No `ctx` here either. This awaits its own work, so there is nothing to hand to `waitUntil`.
    */
   async scheduled(controller, env): Promise<void> {
-    const deleted = await purgeExpiredSubmissions(env.DB, new Date(controller.scheduledTime));
+    // `scheduled_time` and not the wall clock, for the reason above: it is what says whether this run
+    // was on time, and the cutoff it computed follows from it.
+    const fields = { event: 'retention_sweep', cron: controller.cron, scheduled_time: new Date(controller.scheduledTime).toISOString() };
+
+    // The catch is here and not in `retention.ts`, which documents having none: the sweep must still
+    // fail loudly, and it does — this rethrows. What the catch buys is that one filter on
+    // `event = "retention_sweep"` returns the runs and the failures together, rather than the
+    // failures only being visible as an unexplained `outcome: "exception"` on the invocation log.
+    let deleted: number;
+    try {
+      deleted = await purgeExpiredSubmissions(env.DB, new Date(controller.scheduledTime));
+    } catch (error) {
+      consoleLogger.error({ ...fields, ...describeError(error) });
+      throw error;
+    }
 
     // The only evidence this ran. A sweep that fails is silent by nature — nobody notices data that
     // did not get deleted — so it says so on every run, including the (normal, expected) zero.
-    console.log('purged expired record_submissions', { deleted, cron: controller.cron });
+    //
+    // Not an audit, though: Workers Logs keeps 3–7 days and this window is 90. "Has the sweep been
+    // running?" is answered by `SELECT min(received_at) FROM record_submissions`. See
+    // `docs/observability.md`.
+    consoleLogger.info({ ...fields, deleted });
   },
 } satisfies ExportedHandler<Env>;

@@ -7,7 +7,8 @@
 
 import type { ReadPrincipal, WritePrincipal } from './auth';
 import { MAX_REQUEST_BODY_BYTES, MAX_RESPONSE_BYTES } from './config';
-import { errorResponse, isJsonContentType, jsonResponse, readCappedText } from './http';
+import { type ErrorCode, isJsonContentType, jsonResponse, readCappedText } from './http';
+import { fail, type LogFields } from './observability';
 import { provenanceOf } from './provenance';
 import type { Deps, InsertOutcome, NewRecord, StoredRecord } from './storage';
 import { validateReadQuery, validateRecord, validateWriteEnvelope } from './validation';
@@ -20,7 +21,7 @@ interface RecordResult {
    */
   client_id: string | null;
   status: 'created' | 'duplicate' | 'rejected';
-  error?: string;
+  error?: ErrorCode;
   message?: string;
 }
 
@@ -68,27 +69,31 @@ const encoder = new TextEncoder();
  * No app or instance field is read from the body. Identity comes from the API key alone, so a
  * client cannot misreport who it is.
  */
-export async function handlePostRecords(request: Request, principal: WritePrincipal, deps: Deps): Promise<Response> {
+export async function handlePostRecords(request: Request, principal: WritePrincipal, deps: Deps, log: LogFields): Promise<Response> {
   if (!isJsonContentType(request.headers.get('content-type'))) {
-    return errorResponse(415, 'unsupported_media_type', 'Content-Type must be application/json');
+    return fail(log, 415, 'unsupported_media_type', 'Content-Type must be application/json');
   }
 
   const body = await readCappedText(request, MAX_REQUEST_BODY_BYTES);
   if (!body.ok) {
     return body.reason === 'too_large'
-      ? errorResponse(413, 'payload_too_large', `request body exceeds ${String(MAX_REQUEST_BODY_BYTES)} bytes`)
-      : errorResponse(400, 'invalid_json', 'request body is not valid UTF-8');
+      ? fail(log, 413, 'payload_too_large', `request body exceeds ${String(MAX_REQUEST_BODY_BYTES)} bytes`)
+      : fail(log, 400, 'invalid_json', 'request body is not valid UTF-8');
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(body.text);
+    // The thrown value is dropped on purpose, and must stay dropped: V8 quotes the first ~10
+    // characters of its input verbatim in a JSON parse error, so logging this one would put a slice
+    // of the submitted batch into Workers Logs. See the never-log principle in `observability.ts`.
   } catch {
-    return errorResponse(400, 'invalid_json', 'request body is not valid JSON');
+    return fail(log, 400, 'invalid_json', 'request body is not valid JSON');
   }
 
   const envelope = validateWriteEnvelope(parsed);
-  if (!envelope.ok) return errorResponse(400, envelope.error.code, envelope.error.message);
+  // The code, never `envelope.error.message`: three of those interpolate client-supplied field names.
+  if (!envelope.ok) return fail(log, 400, envelope.error.code, envelope.error.message);
 
   // Validate everything first, so a rejected record never reaches storage and the store only ever
   // sees records it can actually persist.
@@ -127,13 +132,42 @@ export async function handlePostRecords(request: Request, principal: WritePrinci
     // and it would let anyone with a key write rows here by sending garbage. A client fuzzing the
     // endpoint is what Workers observability is for; this table is for records that exist.
     const provenance = provenanceOf(request, deps.newSubmissionId());
+    // The one field of `provenance` a log line may carry: server-minted, tied to no visitor, and the
+    // only handle that joins this line to its `record_submissions` rows. Everything else in there —
+    // IP, user agent, city, ASN, timezone — stays in the table that expires.
+    log.submission_id = provenance.submissionId;
+
     const outcomes: InsertOutcome[] = await deps.recordStore.insert(principal, deps.now(), accepted, provenance);
     outcomes.forEach((outcome, i) => {
       results[acceptedIndices[i]].status = outcome;
     });
   }
 
+  Object.assign(log, tally(results));
   return jsonResponse({ results });
+}
+
+/**
+ * Counts the outcomes for the log line — the only thing that makes a 200 legible, since every batch
+ * from a wholly broken client is also a 200.
+ *
+ * A fold over the finished `results`, rather than counters kept during validation: the array is
+ * already the record of what happened, and a second tally maintained alongside it is a second thing
+ * to get wrong. Counts are reported even when zero — this handler ran, so "none" is a measurement
+ * and not an absence.
+ */
+function tally(results: readonly RecordResult[]): Pick<LogFields, 'created' | 'duplicate' | 'rejected' | 'rejections'> {
+  const counts = { created: 0, duplicate: 0, rejected: 0 };
+  const rejections: Partial<Record<ErrorCode, number>> = {};
+
+  for (const result of results) {
+    counts[result.status]++;
+    if (result.error !== undefined) rejections[result.error] = (rejections[result.error] ?? 0) + 1;
+  }
+
+  // Omitted rather than empty when nothing was rejected: `{}` and "no rejections" are the same fact,
+  // and the scalar above already says it.
+  return counts.rejected === 0 ? counts : { ...counts, rejections };
 }
 
 /** Recovers a `client_id` worth echoing from a record that failed validation. */
@@ -172,14 +206,20 @@ function readClientId(raw: unknown): string | null {
  * means the download is complete. A page may be short because it hit the response byte budget,
  * and that is a normal, expected occurrence rather than an error.
  */
-export async function handleGetRecords(url: URL, principal: ReadPrincipal, deps: Deps): Promise<Response> {
+export async function handleGetRecords(url: URL, principal: ReadPrincipal, deps: Deps, log: LogFields): Promise<Response> {
   const query = validateReadQuery(url.searchParams);
-  if (!query.ok) return errorResponse(400, query.error.code, query.error.message);
+  if (!query.ok) return fail(log, 400, query.error.code, query.error.message);
 
   const page = await deps.recordStore.list(principal, query.value);
   const { records, hasMore } = trimToByteBudget(page.records, page.hasMore);
 
   const lastId = records.length > 0 ? records[records.length - 1].id : query.value.afterId;
+
+  log.returned = records.length;
+  log.has_more = hasMore;
+  // The byte budget firing is invisible everywhere else — a truncated page is deliberately
+  // indistinguishable from any other short one on the wire, so this line is the only record of it.
+  log.truncated = records.length < page.records.length;
 
   return jsonResponse({ records, next_after_id: lastId, has_more: hasMore });
 }

@@ -225,4 +225,14 @@ describe('the submission log, end to end', () => {
     const body = await (await read(KEY_READER_SAME)).json<ReadResponse>();
     expect(body.records).toHaveLength(1);
   });
+
+  // `retention.spec.ts` covers the sweep throwing; this covers the wiring around it, which is the
+  // half that could swallow one. The catch in `index.ts` exists to log, not to recover: a sweep that
+  // fails quietly is a retention policy that has quietly stopped, and the whole date-only design of
+  // `records` rests on this running.
+  it('rethrows a failed sweep rather than reporting a successful run', async () => {
+    await env.DB.prepare('DROP TABLE record_submissions').run();
+
+    await expect(worker.scheduled({ scheduledTime: Date.now(), cron: '17 3 * * *', noRetry: () => undefined }, env)).rejects.toThrow();
+  });
 });
