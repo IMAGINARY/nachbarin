@@ -1,7 +1,7 @@
 import { defineProject } from 'vitest/config';
 
 // The client library's unit tests. Plain Node, like scripts/: `fetch`, `Response`, `Headers` and
-// `AbortController` are globals on Node 18+, which is the floor this package declares, so there is
+// `AbortController` are globals on Node 20+, which is the floor this package declares, so there is
 // nothing to emulate and no reason to pay for the Workers pool.
 //
 // These specs drive the *source*, not `dist/`. Whether the built artifact is consumable — dual

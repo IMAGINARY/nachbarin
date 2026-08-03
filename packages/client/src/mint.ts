@@ -12,12 +12,15 @@ export type IdSource = 'crypto.randomUUID' | 'crypto.getRandomValues' | 'Math.ra
  * not what `lib: ["DOM"]` claims. DOM declares `crypto: Crypto` as always present with
  * `randomUUID` always on it; in reality **both are optional**:
  *
- * - Node 18, the floor this package declares in `engines`, has no `globalThis.crypto` at all. It
- *   became a stable global in Node 19.
  * - `randomUUID` is a secure-context-only API. A kiosk served over plain HTTP from something like
  *   `http://192.168.1.50` — ordinary exhibit hardware — has `crypto` but not `randomUUID`.
  *   `getRandomValues` has no such gate, which is why it is the second rung rather than a synonym
- *   for the first.
+ *   for the first. This is the rung that actually fires in the field.
+ * - `globalThis.crypto` missing entirely is no longer a supported case: it has been stable since
+ *   Node 19 and this package's `engines` floor is 20. The bottom rung stays anyway, because it costs
+ *   two lines and the alternative is an unattended kiosk that cannot start — see `newUuid` below. It
+ *   probes rather than checking a version, so whatever exotic runtime omits `crypto` next is
+ *   handled without anyone having to notice first.
  *
  * Hence the cast: it describes the runtime rather than the lib, and reading it through `globalThis`
  * also keeps the ladder stubbable in tests.
@@ -64,8 +67,8 @@ function formatUuidV4(bytes: Uint8Array): string {
  * A UUID, by whatever means the runtime allows. **This never throws.**
  *
  * That last part is the design decision, and it is deliberate. The alternative — refusing to
- * construct a client when no CSPRNG is reachable — loses every visitor's record on a Node 18 host or
- * an insecure-context kiosk, unattended, with nobody present to see the exception. `client_id` is an
+ * construct a client when no CSPRNG is reachable — loses every visitor's record on an
+ * insecure-context kiosk, unattended, with nobody present to see the exception. `client_id` is an
  * idempotency key, not a security token: its only requirement is uniqueness within one installation
  * at the order of a dozen records an hour, and a `Math.random` v4 clears that by a wide margin.
  * Making the degraded case *visible* (see {@link detectIdSource}) is the right response; making it

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detectIdSource, formatRfc3339, newCreatedAt, newUuid } from './mint';
 import { validateClientId, validateCreatedAt } from './validate';
 
-/** Replaces `globalThis.crypto` for one test. `undefined` deletes it, which is Node 18's reality. */
+/** Replaces `globalThis.crypto` for one test. `undefined` deletes it, as a runtime below the floor can. */
 function stubCrypto(value: unknown): void {
   vi.stubGlobal('crypto', value);
 }
@@ -98,7 +98,7 @@ describe('newUuid', () => {
     expect(() => validateClientId(id)).not.toThrow();
   });
 
-  it('falls back to Math.random — Node 18, which has no global crypto at all', () => {
+  it('falls back to Math.random when there is no global crypto at all', () => {
     stubCrypto(undefined);
 
     expect(detectIdSource()).toBe('Math.random');

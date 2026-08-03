@@ -37,7 +37,7 @@ export default defineConfig({
   platform: 'neutral',
 
   // Explicit, and it has to be. Left unset, tsdown reads `engines.node` from package.json and
-  // lowers to `node18` — a floor that describes one of the four runtimes this ships to and says
+  // lowers to `node20` — a floor that describes one of the four runtimes this ships to and says
   // nothing about the browsers that are the actual constraint.
   target: 'es2022',
 

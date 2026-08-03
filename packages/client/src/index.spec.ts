@@ -17,6 +17,10 @@ describe('public surface', () => {
     expect(typeof api.ValidationError).toBe('function');
   });
 
+  it('exports the content fingerprinting helper', () => {
+    expect(typeof api.contentVersionOf).toBe('function');
+  });
+
   it('exports the limits a caller codes against', () => {
     expect(api.MAX_RECORDS_PER_BATCH).toBe(100);
     expect(api.MAX_APP_DATA_BYTES).toBe(65536);
@@ -39,6 +43,7 @@ describe('public surface', () => {
       'READ_LIMIT_MAX',
       'TransportError',
       'ValidationError',
+      'contentVersionOf',
       'createReadClient',
       'createWriteClient',
     ]);

@@ -10,7 +10,7 @@ An exhibit app submits records of visitor interactions; an operator downloads th
 npm install @imaginary-maths/nachbarin-client
 ```
 
-Requires any runtime with a global `fetch` — Node 18+, a browser, a Cloudflare Worker, Deno. The package has **zero runtime dependencies** and ships no Node builtins, deliberately: the first-class client is a kiosk browser on a museum floor, and a kiosk's bundle is not a place to smuggle a dependency tree.
+Requires any runtime with a global `fetch` — Node 20+, a browser, a Cloudflare Worker, Deno. The package has **zero runtime dependencies** and ships no Node builtins, deliberately: the first-class client is a kiosk browser on a museum floor, and a kiosk's bundle is not a place to smuggle a dependency tree.
 
 ## Two clients, because a key is one thing or the other
 
@@ -75,6 +75,87 @@ Both accept `afterId`, `limit`, `engineVersion`, `contentVersion` and an `AbortS
 
 Records carry **dates and never times** — `created_date` in the exhibit's local frame, `received_date` in UTC. The two are in different frames and may differ by one around midnight; that is a skew smell test, not an error. Exact timestamps are not readable through any key.
 
+## Versions, and how to fill them
+
+Two fields describe what produced a record, and they want opposite treatment:
+
+> **Build-time for `engine_version` — the code _is_ the build. Runtime hash for `content_version` — the content might not be.**
+
+### `engineVersion` from a git tag, at build time
+
+A version string you have to remember to bump is a version string that eventually lies, and bumping it in `package.json` means a commit that says nothing. If you tag releases, read the tag at build time instead:
+
+```js
+// vite.config.js
+import { execSync } from 'node:child_process';
+
+const version = execSync('git describe --tags --always --dirty').toString().trim() || 'unknown';
+
+export default { define: { __ENGINE_VERSION__: JSON.stringify(version) } };
+```
+
+```js
+createWriteClient({ …, engineVersion: `future-mobility-simulator@${__ENGINE_VERSION__}` });
+```
+
+Add `declare const __ENGINE_VERSION__: string;` to a `.d.ts` if you are on TypeScript. esbuild spells it `--define:__ENGINE_VERSION__='"v1.4.2"'` — the nested quotes matter, because a define is raw text substitution and an unquoted value becomes an identifier. webpack has `DefinePlugin`, Rollup has `@rollup/plugin-replace`.
+
+Four things that bite:
+
+- `--always` keeps it from failing on a repo with no reachable tag — you get the short SHA instead. `--dirty` appends `-dirty`, which is exactly what you want to see on a hand-built kiosk bundle.
+- A **shallow clone** has no tags. `--depth=1` is the CI default almost everywhere, and the symptom is a bare SHA where you expected `v1.4.2`. Set `fetch-depth: 0` if the tag matters.
+- The `|| 'unknown'` is not decoration: with `git` missing the command yields `''`, and `createWriteClient` throws `ValidationError` on an empty `engineVersion`. An honest `'unknown'` in the corpus beats a kiosk that will not start.
+- Output is short, so the 256-character limit is not a consideration.
+
+### `contentVersion` from the content itself
+
+If the content can change without a rebuild — a scenario file, a level pack, something an operator swaps — then only the running app knows what it actually loaded, and a build-time constant would confidently describe the wrong thing. Fingerprint it:
+
+```js
+import { createWriteClient, contentVersionOf } from '@imaginary-maths/nachbarin-client';
+
+const content = await (await fetch('./content.json')).text();
+
+const client = createWriteClient({
+  baseUrl,
+  apiKey: NACHBARIN_WRITE_KEY,
+  engineVersion: `future-mobility-simulator@${__ENGINE_VERSION__}`,
+  contentVersion: await contentVersionOf(content), // 'sha256:ba7816bf8f01cfea…'
+});
+```
+
+`contentVersionOf` returns `sha256:` followed by 64 lowercase hex characters, and accepts a string or a `Uint8Array`. Call it **once at startup**, not per record. Two records carry the same `content_version` exactly when the visitors saw the same thing, and you can check any stored value from a shell:
+
+```bash
+printf %s "$content" | shasum -a 256   # the same hex, minus the sha256: prefix
+```
+
+Use `printf`, not `echo` — `echo` appends a newline and hashes something else.
+
+**It throws when `crypto.subtle` is unavailable, and does not fall back.** That is deliberate. A second algorithm on a second rung would hash one content file to two different values depending on where the page was served from, and every record would look perfectly fine either way — which destroys the only property the field has. `crypto.subtle` needs a secure context, but `https:`, `http://localhost`, `http://127.0.0.1`, `http://*.localhost` and `file:` all qualify, so a kiosk browser pointed at a local server has it. One served from a LAN address like `http://192.168.1.50` does not.
+
+### When you cannot hash at runtime
+
+Hash in the build instead. It produces the identical string, so values stay comparable with ones written by a kiosk that did it at runtime:
+
+```js
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+const digest = createHash('sha256').update(readFileSync('src/content.json')).digest('hex');
+// define: { __CONTENT_VERSION__: JSON.stringify(`sha256:${digest}`) }
+```
+
+And the honest third option: if the content ships inside your build and cannot change without one, `content_version` tells you nothing `engine_version` does not — **omit it entirely**. That is the "no meaningful notion of one" case, and omitting is not the same as sending `null`.
+
+### Why your hashes might not match
+
+- **CRLF versus LF changes the digest.** Git's `core.autocrlf` is the usual culprit when a Windows machine and a Linux kiosk disagree about identical-looking content. Hash what you ship.
+- **A BOM is content.** Stripping it or not stripping it are two different files.
+- **Hash the bytes you loaded, not a re-serialized object.** `contentVersionOf(JSON.stringify(obj))` is unstable — key order survives neither every engine nor every round trip. Hash the text you fetched.
+
+`contentVersionOf` costs nothing if you never call it: the package is `sideEffects: false` and the entry point is re-exports only, so a bundler drops it.
+
 ## Offline, reloads, and the things that go wrong
 
 The design assumption is a kiosk browser that reloads itself every few minutes, on a machine whose disk is wiped nightly, behind a network that may be down for hours, with nobody present to see an error.
@@ -96,8 +177,8 @@ The design assumption is a kiosk browser that reloads itself every few minutes, 
 | -------------------- | --------------------------- | ----------------------------------------------------------------------------------- |
 | `baseUrl`            | —                           | Service root. A path prefix is kept, so a service behind `/nachbarin` works.        |
 | `apiKey`             | —                           | Sent as `Authorization: Bearer`. Never appears in a URL, a message or a diagnostic. |
-| `engineVersion`      | — (write, required)         | Default for every record; overridable per record.                                   |
-| `contentVersion`     | absent                      | Omit it when the app has no such notion. Do not pass `null` — the two differ.       |
+| `engineVersion`      | — (write, required)         | Default for every record; overridable per record. See **Versions** above.           |
+| `contentVersion`     | absent                      | Omit it when the app has no such notion; do not pass `null`. See **Versions**.      |
 | `fetch`              | global `fetch`              | Pass it **bound**: `globalThis.fetch.bind(globalThis)`.                             |
 | `requestTimeoutMs`   | `30_000`                    | Per HTTP request, not per flush.                                                    |
 | `flushIntervalMs`    | `60_000`                    | Measured from the last attempt, not the last write.                                 |

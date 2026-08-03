@@ -28,6 +28,8 @@ export type { ReadClient, ReadClientOptions } from './read-client';
 
 export { ApiError, TransportError, ValidationError } from './errors';
 
+export { contentVersionOf } from './content-version';
+
 export type { ListParams } from './transport';
 export type { QueueStorage } from './storage';
 export type { EvictionReason } from './queue';
