@@ -10,6 +10,10 @@
     "data-capture",
     "api-client"
   ],
+  "author": {
+    "name": "Eric Londaits",
+    "url": "https://github.com/elondaits"
+  },
   "license": "MIT",
   "homepage": "https://github.com/IMAGINARY/nachbarin/tree/main/packages/client#readme",
   "bugs": {

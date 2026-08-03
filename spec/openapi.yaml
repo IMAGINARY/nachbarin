@@ -45,6 +45,9 @@ info:
       trailing slash. There is no trailing-slash normalization.
     - `405` `method_not_allowed` — any method other than GET or POST on `/v1/records`, with an
       `Allow: GET, POST` header.
+  contact:
+    name: Imaginary gGmbH
+    url: https://github.com/IMAGINARY/nachbarin
   license:
     name: MIT
     url: https://github.com/IMAGINARY/nachbarin/blob/main/LICENSE
