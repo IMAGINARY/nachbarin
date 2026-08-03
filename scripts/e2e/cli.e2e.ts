@@ -28,6 +28,7 @@ describe('cli dispatch', () => {
       'log key-activity',
       'log stale-batches',
       'log record-time',
+      'record stats',
       'record erase',
       'export records',
     ]) {

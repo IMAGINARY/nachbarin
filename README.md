@@ -71,7 +71,7 @@ The operator CLI in `scripts/` is how that work is done. Run it as `node scripts
 
 **`--local` is the default; `--remote` must be typed.** Every command runs against the local dev database unless you pass `--remote`, mirroring the deliberate absence of a `db:migrate:remote` script — try a command locally, then repeat it with `--remote`. The destructive commands — `installation delete`, `key revoke`, `record erase` — additionally demand a typed confirmation on `--remote` (and `installation delete --cascade` demands one even locally), as does `installation edit` when it renames the pair. The minted key and query results go to stdout; every prompt and human-facing notice goes to stderr, so redirecting stdout captures exactly the data.
 
-`records` and `record_submissions` are written by the service, not hand-maintained: `records` is reachable through `record erase` and `export records`, and the submission log — which has no API at all — is read through the `log` subcommands. For a query the CLI does not parameterize, the raw SQL lives in [docs/operations.md](docs/operations.md).
+`records` and `record_submissions` are written by the service, not hand-maintained: `records` is reachable through `record stats`, `record erase` and `export records`, and the submission log — which has no API at all — is read through the `log` subcommands. For a query the CLI does not parameterize, the raw SQL lives in [docs/operations.md](docs/operations.md).
 
 ### Registering an installation
 
@@ -122,6 +122,27 @@ node scripts/cli.ts key mint \
 Every key grants exactly one installation, whatever its kind. A read key downloads that one installation's records: `GET /v1/records` takes no `?app=` or `?instance=`, because the key already settles the question.
 
 `key list --app … --instance …` shows every key for an installation — its id, kind, creation time, and revocation state — but never the hash, which is not a key and is useless as one.
+
+### Counting records per installation
+
+How much each installation has produced, lifetime and lately — the question `installation list`'s single `RECORDS` column cannot answer, because with no time window a venue that went quiet three weeks ago looks like one that submitted this morning:
+
+```sh
+node scripts/cli.ts record stats --remote
+```
+
+```
+APP                        INSTANCE   TOTAL  LAST_30D
+future-mobility-simulator  default    1284   96
+future-mobility-simulator  tour-lyon  311    311
+survey-kiosk               default    0      0
+```
+
+An installation that has never submitted still gets a row, counted `0 0` — that is the case worth seeing. `--days N` changes the window and renames the column; the window is **N days ending today, inclusive**, so `--days 1` is today alone, and the exact bounds are printed on stderr where a redirect leaves them visible.
+
+The window is over `received_date` — the server's UTC date, when the record reached us — and **not** over `created_date`, which is what `export records --from/--to` filters on. A station that could not reach the network for a week and then drained its queue counts on the day the records actually arrived, which is what "still producing?" means when you are looking for a venue that has gone quiet.
+
+`--app` narrows to one app and `--instance` to one instance of it; `--instance` alone is refused, because `instance_id` is not unique across apps and the counts would silently merge unrelated ones. Pass `--csv` for a spreadsheet — it goes to stdout like the table, so `record stats --csv --remote > stats.csv` writes a clean file with the window note still on your terminal.
 
 ### Exporting across installations
 
