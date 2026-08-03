@@ -2,26 +2,12 @@
  * HTTP plumbing: response construction, content negotiation, and bounded body reading.
  */
 
-/**
- * Machine-readable failure codes.
- *
- * `error` is always one of these, at the top level and inside a per-record result alike. Human
- * prose lives in a separate `message` field, so clients branch on a stable code and messages stay
- * free to be reworded.
- */
-export type ErrorCode =
-  | 'invalid_json'
-  | 'invalid_request'
-  | 'invalid_field'
-  | 'batch_too_large'
-  | 'unauthorized'
-  | 'forbidden'
-  | 'not_found'
-  | 'method_not_allowed'
-  | 'payload_too_large'
-  | 'unsupported_media_type'
-  | 'internal_error'
-  | 'unavailable';
+import type { ErrorCode } from './error-codes';
+
+// Re-exported so `import { type ErrorCode } from './http'` keeps working everywhere it already did.
+// The codes themselves live in a file with no imports and no globals, because the client's parity
+// spec has to value-import them under `types: []` — see the header of `error-codes.ts`.
+export type { ErrorCode } from './error-codes';
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 

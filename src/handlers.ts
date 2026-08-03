@@ -13,8 +13,13 @@ import { provenanceOf } from './provenance';
 import type { Deps, InsertOutcome, NewRecord, StoredRecord } from './storage';
 import { validateReadQuery, validateRecord, validateWriteEnvelope } from './validation';
 
-/** One entry of a write response. Always positionally aligned with the submitted record. */
-interface RecordResult {
+/**
+ * One entry of a write response. Always positionally aligned with the submitted record.
+ *
+ * Exported only so `test/client-protocol.spec.ts` can assert that the client's re-declaration of it
+ * still matches. Nothing in `src/` imports it.
+ */
+export interface RecordResult {
   /**
    * Echoed back for readability, not as a key — see {@link handlePostRecords}. Null when the
    * submitted `client_id` was itself unusable, which is the only reason it can be null.

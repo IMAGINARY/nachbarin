@@ -1,34 +1,44 @@
 /**
  * Public entry point for the nachbarin client.
  *
- * Nothing here talks to the service yet — this pass built the packaging, not the protocol. The
- * shape below is a placeholder chosen to exercise every piece of that packaging: an exported type
- * (so the .d.ts has something to bundle), an exported function (so the CJS/ESM split and
- * tree-shaking have something to carry), and a `fetch` reference (so a build failure tells us the
- * isomorphic type setup is wrong now rather than us discovering it later).
+ * Re-exports only — every declaration lives in the module that owns it, and this file is the list of
+ * what a consumer may depend on. Anything not named here is internal and free to change.
+ *
+ * Two factories rather than one client, because a key is either `read` or `write` and never both.
+ * An object carrying both methods would always have a half that can only 403; making the wrong call
+ * unwritable is better than making it a runtime error.
+ *
+ * Note what is *not* re-exported: the `*_KEYS` arrays from `protocol.ts`. They exist for the parity
+ * specs, and naming them here would keep them in every consumer's bundle for nothing.
  */
 
-export interface ClientOptions {
-  /** Base URL of the service, e.g. `https://nachbarin.example.workers.dev`. */
-  readonly baseUrl: string;
-  /**
-   * A `read` or `write` API key. Which of the two it is, and which installation it covers, are
-   * properties of the key itself — the service takes identity and scope from it alone, never from
-   * a request body or query string. There is nothing to configure here.
-   */
-  readonly apiKey: string;
-  /**
-   * Injection point for the transport. Defaults to the global `fetch`, which exists in every
-   * runtime this package targets; tests and exotic hosts pass their own.
-   */
-  readonly fetch?: typeof globalThis.fetch;
-}
+export { createWriteClient } from './write-client';
+export type {
+  DiagnosticEvent,
+  FlushResult,
+  NewRecordInput,
+  RecordOutcome,
+  WriteClient,
+  WriteClientOptions,
+  WriteClientState,
+} from './write-client';
 
-export interface Client {
-  /** The service origin, normalized from `ClientOptions.baseUrl`. */
-  readonly baseUrl: string;
-}
+export { createReadClient } from './read-client';
+export type { ReadClient, ReadClientOptions } from './read-client';
 
-export function createClient(options: ClientOptions): Client {
-  return { baseUrl: new URL(options.baseUrl).origin };
-}
+export { ApiError, TransportError, ValidationError } from './errors';
+
+export type { ListParams } from './transport';
+export type { QueueStorage } from './storage';
+export type { EvictionReason } from './queue';
+export type { IdSource } from './mint';
+
+export type { ErrorCode, RecordPage, RecordResult, RecordStatus, StoredRecord, WireRecord } from './protocol';
+export {
+  MAX_APP_DATA_BYTES,
+  MAX_RECORDS_PER_BATCH,
+  MAX_REQUEST_BODY_BYTES,
+  MAX_VERSION_LENGTH,
+  READ_LIMIT_DEFAULT,
+  READ_LIMIT_MAX,
+} from './protocol';
