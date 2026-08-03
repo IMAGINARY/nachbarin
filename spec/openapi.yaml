@@ -47,7 +47,7 @@ info:
       `Allow: GET, POST` header.
   license:
     name: MIT
-    url: https://github.com/elondaits/nachbarin/blob/main/LICENSE
+    url: https://github.com/IMAGINARY/nachbarin/blob/main/LICENSE
 
 servers:
   - url: http://localhost:8787
