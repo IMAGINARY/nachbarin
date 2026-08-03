@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // Not the Worker's types. This package is published and runs in a kiosk browser, in Node, in a
+    // Worker and in Deno, so `Env` is meaningless here — and dropping @types/node is the point, not
+    // a side effect: with it gone, `process`, `Buffer` and `node:*` do not type-check, so the
+    // compiler enforces the isomorphism instead of review having to notice it.
+    "types": [],
+    // ...which leaves nothing declaring `fetch`. `DOM` is a lib, not a package — nothing installed,
+    // nothing emitted — and it supplies exactly the WHATWG surface this client uses (fetch, Request,
+    // Response, Headers, AbortController, URL), all of which exist in every runtime above. The trade
+    // is that DOM also declares `window`/`document`/`localStorage`, which exist in exactly one of
+    // them. The `no-restricted-globals` block in ../../eslint.config.mjs is the other half of this
+    // decision — do not remove one without the other.
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    // Every export carries an explicit type annotation and `import type` is spelled out, which makes
+    // the emitted .d.ts a mechanical function of the source rather than of inference. That matters
+    // more here than in src/: the .d.ts is the file consumers actually read.
+    "verbatimModuleSyntax": true
+  },
+  // Restated, not inherited-and-forgotten: `extends` does inherit include/exclude, but resolves them
+  // relative to the *base* config — so without these two lines this config would compile the
+  // Worker's src/. Same reason scripts/tsconfig.json and test/tsconfig.json restate them.
+  //
+  // `exclude` is a real list rather than `[]` as in scripts/: `./**/*.ts` matches `.d.ts`, so an
+  // unexcluded dist/ would feed the build's own output back into the program.
+  "include": ["./**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

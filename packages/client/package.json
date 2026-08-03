@@ -1,0 +1,63 @@
+{
+  "name": "@imaginary-maths/nachbarin-client",
+  "version": "0.0.1",
+  "description": "Client for the nachbarin data-capture API — submit exhibit records, download them incrementally.",
+  "keywords": [
+    "nachbarin",
+    "museum",
+    "exhibit",
+    "telemetry",
+    "data-capture",
+    "api-client"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/IMAGINARY/nachbarin/tree/main/packages/client#readme",
+  "bugs": {
+    "url": "https://github.com/IMAGINARY/nachbarin/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IMAGINARY/nachbarin.git",
+    "directory": "packages/client"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.cts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/core": "^0.18.5",
+    "publint": "^0.3.22",
+    "tsdown": "^0.22.14"
+  }
+}

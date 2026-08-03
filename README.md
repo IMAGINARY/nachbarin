@@ -238,6 +238,20 @@ npm run db:migrate:local                                  # local, safe
 npx wrangler d1 migrations apply nachbarin --remote       # production, one-way
 ```
 
+## Client library
+
+Apps do not have to speak this API by hand. [`packages/client`](packages/client) is an npm workspace publishing **[`@imaginary-maths/nachbarin-client`](https://www.npmjs.com/package/@imaginary-maths/nachbarin-client)** — importable from `import` and `require` projects alike, with TypeScript declarations for both, zero runtime dependencies, and no Node builtins, so it runs in a kiosk browser as readily as in Node, a Worker or Deno.
+
+It is currently **packaging only**: the build, tests and publishing pipeline are done, the protocol is not. See [its README](packages/client/README.md) for how to consume it from a checkout without publishing.
+
+```sh
+npm run build:client      # build once
+npm run dev:client        # rebuild on save — the loop when another project consumes it locally
+npm run typecheck:client  # the build does NOT type-check; this is what does
+```
+
+Its version is independent of this service's — the repo root is `private` and stays at `0.0.0`.
+
 ## Credits
 
 Developed by [Eric Londaits](http://github.com/elondaits) for Imaginary gGmbH.

@@ -7,3 +7,7 @@ worker-configuration.d.ts
 
 # npm owns the formatting of the lockfile.
 package-lock.json
+
+# Build output — rolldown owns the formatting of what it emits. Without this, `npm run format`
+# rewrites dist/ and `format:check` fails on any clean-checkout build.
+packages/*/dist/
