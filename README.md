@@ -6,6 +6,14 @@ This service provides an API to digital exhibits to capture and store JSON data 
 
 Nachbarin is the friendly neighbor that receives your payloads and keeps them safe until you go look for them. According to German folklore, a superior option to postboxes and lockers. The unsung hero holding the fabric of society together, one parcel at a time.
 
+## About this repository
+
+This is the source of the service Imaginary gGmbH runs for its own exhibits, on its own Cloudflare account. It is published for transparency and so that others can reuse it. It is not a hosted service that anyone can sign up for, and it comes with no promise of support. Bug reports are welcome as issues. Security problems go through [SECURITY.md](SECURITY.md) instead.
+
+**Running your own copy.** Create a D1 database in your own account with `npx wrangler d1 create nachbarin`. Put its id in `database_id` in `wrangler.jsonc`, in place of ours, which only works with our account. Then apply the migrations with `npx wrangler d1 migrations apply nachbarin --remote`, run `npm run deploy`, and register installations and mint keys as described in [Operations](#operations).
+
+**This is engineering documentation, not a legal assessment.** The privacy choices described below are design decisions. They do not say that any particular deployment complies with the GDPR or any other law. Whoever operates a copy of this service is the controller for the data it collects and must make their own assessment.
+
 ## Concepts
 
 - **app** — the software module, e.g. `future-mobility-simulator`. Usually named after its GitHub repository.
@@ -57,7 +65,7 @@ It is written on every POST and read by nobody: there is no endpoint, and no key
 | `cf_asn`, `cf_as_organization`     | The ISP, as a number and as a name.                                 |
 | `cf_timezone`                      | IANA name from the **IP** — independent of what the exhibit claims. |
 
-**What this table is, and is not.** The IP and geo describe the exhibit's building and its ISP — a cable and an address already on the museum's website. They are not about visitors. The field that makes this table sensitive is the precise `created_at`, and that is what the 90-day window and the operator-only access are for. There is deliberately no latitude, longitude or postal code: IP geolocation returns an ISP's centroid rather than a position, so they add nothing over `cf_city` while looking like they add a great deal.
+**What this table is, and is not.** The design treats the IP and geo as describing the exhibit's connection: the venue's network and its ISP, not the visitor using the exhibit. That reasoning holds only as long as exhibits connect through the venue's own network. Whether these fields count as personal data in a given deployment is for its operator to assess. The field that makes this table sensitive is the precise `created_at`, and that is what the 90-day window and the operator-only access are for. There is deliberately no latitude, longitude or postal code: IP geolocation returns an ISP's centroid rather than a position, so they add nothing over `cf_city` while looking like they add a great deal.
 
 **Retention is automatic.** A cron trigger deletes rows past 90 days (`METADATA_RETENTION_DAYS` in `src/config.ts`) every night. It will not ask, and nothing else in this repo depends on someone remembering it — the date-only design of `records` is only honest as long as this runs.
 
@@ -80,7 +88,7 @@ The operator CLI in `scripts/` is how that work is done. Run it as `node scripts
 ```sh
 node scripts/cli.ts installation create \
   --app future-mobility-simulator --instance museum-x \
-  --label "Deutsches Museum, north hall" --remote
+  --label "Museum X, north hall" --remote
 ```
 
 `--instance` may be omitted; it defaults to `default`. Both ids are limited to 100 characters of `[a-zA-Z0-9._-]` — they are typed by hand and, being identifiers, must match exactly; anything expressive belongs in `--label`. The CLI rejects an out-of-charset id before it reaches SQL, and re-registering an existing pair is a plain `already exists` rather than a raw constraint error.
@@ -94,7 +102,7 @@ The pair is an identifier, not a fixture: a typo, an app rename, or an exhibit m
 ```sh
 node scripts/cli.ts installation edit \
   --app future-mobility-simulator --instance default \
-  --new-instance museum-x --new-label "Deutsches Museum, north hall" --remote
+  --new-instance museum-x --new-label "Museum X, north hall" --remote
 ```
 
 Any of `--new-app`, `--new-instance`, and `--new-label` may be given (`--new-label ""` clears the label); renaming onto an existing pair is refused with a plain message rather than a raw constraint error. Two things to be deliberate about. A rename is the _same_ installation continuing under a new name — its history is reported under the new pair from then on, so for a venue move where the old and new venue's data should stay separate, register a new installation instead. And keys follow the rename: right for a travelling copy, but on a sale or handover, revoke the old keys and mint fresh ones.
@@ -136,7 +144,7 @@ node scripts/cli.ts record stats --remote
 ```
 APP                        INSTANCE   TOTAL  LAST_30D
 future-mobility-simulator  default    1284   96
-future-mobility-simulator  tour-lyon  311    311
+future-mobility-simulator  tour-a     311    311
 survey-kiosk               default    0      0
 ```
 
@@ -240,9 +248,9 @@ npx wrangler d1 migrations apply nachbarin --remote       # production, one-way
 
 ## Client library
 
-Apps do not have to speak this API by hand. [`packages/client`](packages/client) is an npm workspace publishing **[`@imaginary-maths/nachbarin-client`](https://www.npmjs.com/package/@imaginary-maths/nachbarin-client)** — importable from `import` and `require` projects alike, with TypeScript declarations for both, zero runtime dependencies, and no Node builtins, so it runs in a kiosk browser as readily as in Node, a Worker or Deno.
+Apps do not have to speak this API by hand. [`packages/client`](packages/client) is an npm workspace for the package **`@imaginary-maths/nachbarin-client`** — importable from `import` and `require` projects alike, with TypeScript declarations for both, zero runtime dependencies, and no Node builtins, so it runs in a kiosk browser as readily as in Node, a Worker or Deno.
 
-It is currently **packaging only**: the build, tests and publishing pipeline are done, the protocol is not. See [its README](packages/client/README.md) for how to consume it from a checkout without publishing.
+It provides a write client with a durable queue that survives a page reload, and a read client that downloads records page by page. It is not on npm yet. See [its README](packages/client/README.md) for how to use it, and how to consume it from a checkout until it is published.
 
 ```sh
 npm run build:client      # build once
