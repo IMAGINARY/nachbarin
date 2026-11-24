@@ -77,6 +77,10 @@ closed, so this list is checkable.
 | `truncated`                                   | GET                        | Whether the response byte budget shortened the page. Recorded nowhere else: a truncated page is deliberately indistinguishable from any other short page on the wire.                                                                        |
 | `error_name`, `error_message`, `stack`        | 5xx / 503                  | Clamped to 1 KB each. `stack` overlaps the other two — V8 starts a stack with `name: message` — and is kept because it is the only one that says _where_.                                                                                    |
 
+A CORS preflight is a request too and gets its own line: `method: "OPTIONS"`, `status: 204`, with no
+key fields. Browsers cache a preflight for up to two hours (`Access-Control-Max-Age: 7200`), so
+there are at most a few of these per kiosk per day.
+
 Emitted at `error` level for 5xx and `info` for everything else. A 4xx is the protocol working; a 5xx
 is ours to answer for, and a 503 counts because it means storage failed even though the client should
 retry. Anything finer is a query over the indexed `status`.

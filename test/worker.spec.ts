@@ -69,7 +69,20 @@ describe('worker wiring', () => {
     const response = await SELF.fetch('https://example.com/v1/records', { method: 'DELETE' });
 
     expect(response.status).toBe(405);
-    expect(response.headers.get('allow')).toBe('GET, POST');
+    expect(response.headers.get('allow')).toBe('GET, POST, OPTIONS');
+  });
+
+  // Through the real runtime too, in case `wrangler`'s response handling ever changes what
+  // `handleRequest` sets.
+  it('answers a CORS preflight', async () => {
+    const response = await SELF.fetch('https://example.com/v1/records', {
+      method: 'OPTIONS',
+      headers: { origin: 'http://localhost:5173', 'access-control-request-method': 'POST' },
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-origin')).toBe('*');
+    expect(response.headers.get('access-control-allow-headers')).toBe('authorization, content-type');
   });
 
   it('responds with JSON and a charset', async () => {

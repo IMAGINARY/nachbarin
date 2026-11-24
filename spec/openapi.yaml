@@ -43,8 +43,17 @@ info:
 
     - `404` `not_found` — any path other than `/v1/records`, including `/v1/records/` with a
       trailing slash. There is no trailing-slash normalization.
-    - `405` `method_not_allowed` — any method other than GET or POST on `/v1/records`, with an
-      `Allow: GET, POST` header.
+    - `405` `method_not_allowed` — any method other than GET, POST or OPTIONS on `/v1/records`,
+      with an `Allow: GET, POST, OPTIONS` header.
+
+    ## CORS
+
+    The service can be called from a browser page on any origin, including `file:` (`Origin: null`).
+    Every response, errors included, carries `Access-Control-Allow-Origin: *` and
+    `Access-Control-Expose-Headers: Retry-After`. `OPTIONS /v1/records` answers a preflight with
+    `204`, needs no key, and allows `GET, POST` with the `authorization` and `content-type` headers
+    (`Access-Control-Max-Age: 7200`). A wildcard is safe because the credential is a bearer header
+    and never a cookie.
   contact:
     name: Imaginary gGmbH
     url: https://github.com/IMAGINARY/nachbarin

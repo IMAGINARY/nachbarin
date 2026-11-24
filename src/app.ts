@@ -10,14 +10,47 @@ import { describeError, fail, type LogFields } from './observability';
 import { type Deps, StorageUnavailableError } from './storage';
 
 const RECORDS_PATH = '/v1/records';
-const RECORDS_ALLOW = 'GET, POST';
+const RECORDS_ALLOW = 'GET, POST, OPTIONS';
+
+/**
+ * CORS, on every response. The first-class client is a kiosk browser running a page from
+ * `http://localhost` or `file:`, which is never the Worker's origin. Without these headers the browser
+ * blocks the POST, the client sees only a `NetworkError`, and it retries silently until the machine
+ * powers off and the queue is lost. No test outside a browser can see that happen.
+ *
+ * `*` and not an allowlist, for two reasons:
+ * - The credential is a bearer header, not a cookie. A page on any origin learns nothing without a
+ *   key, and a page that has the key can use it from anywhere, curl included.
+ * - A `file:` kiosk sends `Origin: null`, so an allowlist would have to admit `null`, which restricts
+ *   nothing. The list would just be a per-venue setting to get wrong.
+ *
+ * `Retry-After` is exposed because it is not CORS-safelisted. Without the expose, the client's 503
+ * backoff could not read it.
+ */
+const CORS_HEADERS: Readonly<Record<string, string>> = {
+  'access-control-allow-origin': '*',
+  'access-control-expose-headers': 'Retry-After',
+};
+
+/**
+ * The preflight answer. `Authorization` and a JSON `Content-Type` are both non-simple, so every
+ * cross-origin request preflights.
+ *
+ * 7200 s is Chromium's cap, and a longer value gets clamped. A cached preflight costs nothing; an
+ * uncached one is an extra request and an extra log line.
+ */
+const PREFLIGHT_HEADERS: Readonly<Record<string, string>> = {
+  'access-control-allow-methods': 'GET, POST',
+  'access-control-allow-headers': 'authorization, content-type',
+  'access-control-max-age': '7200',
+};
 
 /**
  * Handles one request end to end.
  *
  * The pipeline order is deliberate:
  *
- *   route (404/405) -> authenticate (401/403) -> media type (415) -> read body (413)
+ *   route (404/405, OPTIONS -> 204) -> authenticate (401/403) -> media type (415) -> read body (413)
  *   -> parse (400) -> validate (400) -> store (200/500/503)
  *
  * Routing precedes authentication so an unknown path 404s without needing a key; the API surface
@@ -32,6 +65,10 @@ const RECORDS_ALLOW = 'GET, POST';
 export async function handleRequest(request: Request, deps: Deps): Promise<Response> {
   const log: LogFields = { event: 'request', method: request.method };
   const response = await routeCatching(request, deps, log);
+  // Here rather than in each path, so that no path can leave it out: a 401 or 503 the browser
+  // withholds from the client is as bad as a blocked 200. Every response is built with
+  // `new Response`, so its headers can be changed.
+  for (const [name, value] of Object.entries(CORS_HEADERS)) response.headers.set(name, value);
 
   log.status = response.status;
   // The level is the one thing derived rather than recorded: a 4xx is the protocol working, a 5xx is
@@ -71,6 +108,11 @@ async function route(request: Request, deps: Deps, log: LogFields): Promise<Resp
   // beats two permanently valid spellings of the same URL.
   if (url.pathname !== RECORDS_PATH) {
     return fail(log, 404, 'not_found', 'unknown endpoint');
+  }
+
+  // Before authentication, because a browser never attaches credentials to a preflight.
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: PREFLIGHT_HEADERS });
   }
 
   if (request.method !== 'GET' && request.method !== 'POST') {
