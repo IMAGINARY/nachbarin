@@ -1,6 +1,6 @@
 {
   "name": "@imaginary-maths/nachbarin-client",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Client for the nachbarin data-capture API — submit exhibit records, download them incrementally.",
   "keywords": [
     "nachbarin",
