@@ -238,7 +238,7 @@ Two cautions. **Do not commit the `file:` line** — it encodes your directory l
 npm pack -w @imaginary-maths/nachbarin-client --pack-destination /tmp
 
 # in the consuming project
-npm install /tmp/imaginary-maths-nachbarin-client-0.0.1.tgz
+npm install /tmp/imaginary-maths-nachbarin-client-<version>.tgz
 ```
 
 `npm pack` runs `prepare`, so the tarball is always fresh. The consumer gets a real extracted copy of exactly the published file set rather than a symlink — the only local option that catches a wrong `"files"` list or an undeclared dependency. It is a gate, not a loop: run it before each publish and after any change to `files`, `exports` or `dependencies`.
@@ -260,11 +260,15 @@ No CI, so this is a manual act from a laptop. npm provenance is therefore unavai
 
 ```bash
 npm version <patch|minor|major> -w @imaginary-maths/nachbarin-client
-npm run typecheck:client
+npm run typecheck:client && npm run lint && npm run format:check
 npx vitest run
 npm pack -w @imaginary-maths/nachbarin-client --dry-run   # read the file list before trusting it
+git commit -am "release: nachbarin-client v<version>" && git tag client-v<version>
 npm publish -w @imaginary-maths/nachbarin-client          # publishConfig.access is already "public"
+git push && git push origin client-v<version>
 ```
+
+`npm version` run against a workspace makes **no commit and no tag** — it only rewrites `packages/client/package.json` and the root `package-lock.json` — so the commit and tag are by hand. The tag is prefixed `client-` because the service is versioned separately, and a bare `v1.0.0` would read as the service's.
 
 `prepublishOnly` re-runs the type-check and tests, and `prepare` rebuilds — but read the `--dry-run` file list yourself. It should be `dist/*`, `package.json`, `README.md`, `LICENSE`, and nothing else.
 
